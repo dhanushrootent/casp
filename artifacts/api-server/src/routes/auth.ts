@@ -6,6 +6,7 @@ import { eq, or, inArray } from "drizzle-orm";
 const router: IRouter = Router();
 
 router.post("/auth/login", async (req: Request, res: Response) => {
+  console.log("Login request received");
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: "bad_request", message: "Username and password required" });
