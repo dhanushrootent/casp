@@ -1,0 +1,21 @@
+packages:
+  "recharts": "For admin and teacher analytics dashboards"
+  "framer-motion": "For smooth page transitions and interactive elements"
+  "date-fns": "For formatting dates in results and tables"
+  "lucide-react": "For beautiful icons across the application"
+  "clsx": "For conditional class names"
+  "tailwind-merge": "For merging tailwind classes safely"
+  "react-dropzone": "For the syllabus PDF upload interface"
+
+images:
+  - path: "artifacts/caaspp-elpac/public/images/hero-edu.png"
+    description: "Abstract, modern educational background with subtle geometric shapes, books, and graduation cap motifs in deep navy and teal, clean and professional"
+    aspect_ratio: "16:9"
+  - path: "artifacts/caaspp-elpac/public/images/logo-mark.png"
+    description: "A clean, modern logo mark featuring a stylized open book transforming into a star or spark, in teal and gold, transparent background"
+    aspect_ratio: "1:1"
+
+notes:
+  - "Using dummy credentials for POC login as requested"
+  - "Using Recharts for data visualization"
+  - "Simulating PDF text extraction in browser to ensure robust POC demo, relying on backend AI generation for the actual syllabus processing"

@@ -1,0 +1,88 @@
+import { Router, type IRouter, type Request, type Response } from "express";
+import { db } from "@workspace/db";
+import { assessmentsTable, questionsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { v4 as uuidv4 } from "uuid";
+
+const router: IRouter = Router();
+
+router.get("/assessments", async (req: Request, res: Response) => {
+  const { type, subject, grade } = req.query;
+  let assessments = await db.select().from(assessmentsTable);
+
+  if (type) assessments = assessments.filter(a => a.type === type);
+  if (subject) assessments = assessments.filter(a => a.subject === subject);
+  if (grade) assessments = assessments.filter(a => a.grade === grade);
+
+  return res.json(assessments);
+});
+
+router.post("/assessments", async (req: Request, res: Response) => {
+  const { title, type, subject, grade, classId, description, duration, difficulty } = req.body;
+  const id = uuidv4();
+  const [assessment] = await db.insert(assessmentsTable).values({
+    id,
+    title,
+    type,
+    subject,
+    grade,
+    classId: classId ?? null,
+    description: description ?? null,
+    duration,
+    questionCount: 0,
+    difficulty,
+    status: "active",
+  }).returning();
+
+  return res.status(201).json(assessment);
+});
+
+router.get("/assessments/:assessmentId", async (req: Request, res: Response) => {
+  const { assessmentId } = req.params;
+  const assessments = await db.select().from(assessmentsTable).where(eq(assessmentsTable.id, assessmentId as string)).limit(1);
+  const assessment = assessments[0];
+
+  if (!assessment) {
+    return res.status(404).json({ error: "not_found", message: "Assessment not found" });
+  }
+
+  const questions = await db.select().from(questionsTable).where(eq(questionsTable.assessmentId, assessmentId as string));
+  questions.sort((a, b) => a.orderIndex - b.orderIndex);
+
+  return res.json({ ...assessment, questions });
+});
+
+router.get("/assessments/:assessmentId/questions", async (req: Request, res: Response) => {
+  const { assessmentId } = req.params;
+  const questions = await db.select().from(questionsTable).where(eq(questionsTable.assessmentId, assessmentId as string));
+  questions.sort((a, b) => a.orderIndex - b.orderIndex);
+  return res.json(questions);
+});
+
+router.post("/assessments/:assessmentId/questions", async (req: Request, res: Response) => {
+  const { assessmentId } = req.params;
+  const { text, type, options, correctAnswer, explanation, points, difficulty, skill, orderIndex } = req.body;
+
+  const id = uuidv4();
+  const [question] = await db.insert(questionsTable).values({
+    id,
+    assessmentId: assessmentId as string,
+    text,
+    type,
+    options: options ?? null,
+    correctAnswer: correctAnswer ?? null,
+    explanation: explanation ?? null,
+    points,
+    difficulty,
+    skill: skill ?? null,
+    orderIndex,
+  }).returning();
+
+  await db.select().from(assessmentsTable).where(eq(assessmentsTable.id, assessmentId as string));
+  const allQuestions = await db.select().from(questionsTable).where(eq(questionsTable.assessmentId, assessmentId as string));
+  await db.update(assessmentsTable).set({ questionCount: allQuestions.length }).where(eq(assessmentsTable.id, assessmentId as string));
+
+  return res.status(201).json(question);
+});
+
+export default router;

@@ -1,0 +1,977 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: CAASPP & ELPAC Assessment Platform API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: assessments
+    description: Assessment operations
+  - name: questions
+    description: Question operations
+  - name: results
+    description: Results operations
+  - name: syllabus
+    description: Syllabus upload and AI question generation
+  - name: users
+    description: User management
+  - name: analytics
+    description: Analytics and reporting
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout user
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List all users (admin only)
+      parameters:
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [student, teacher, admin]
+        - name: classId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /users/{userId}:
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get user by ID
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update user details (e.g., assign class)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /assessments:
+    get:
+      operationId: listAssessments
+      tags: [assessments]
+      summary: List assessments
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CAASPP, ELPAC]
+        - name: subject
+          in: query
+          schema:
+            type: string
+        - name: grade
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of assessments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Assessment"
+    post:
+      operationId: createAssessment
+      tags: [assessments]
+      summary: Create an assessment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssessmentRequest"
+      responses:
+        "201":
+          description: Assessment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Assessment"
+
+  /assessments/{assessmentId}:
+    get:
+      operationId: getAssessment
+      tags: [assessments]
+      summary: Get assessment by ID
+      parameters:
+        - name: assessmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Assessment with questions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssessmentWithQuestions"
+
+  /assessments/{assessmentId}/questions:
+    get:
+      operationId: listAssessmentQuestions
+      tags: [questions]
+      summary: List questions for an assessment
+      parameters:
+        - name: assessmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of questions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Question"
+    post:
+      operationId: addQuestionToAssessment
+      tags: [questions]
+      summary: Add a question to an assessment
+      parameters:
+        - name: assessmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateQuestionRequest"
+      responses:
+        "201":
+          description: Question added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Question"
+
+  /results:
+    get:
+      operationId: listResults
+      tags: [results]
+      summary: List assessment results
+      parameters:
+        - name: studentId
+          in: query
+          schema:
+            type: string
+        - name: assessmentId
+          in: query
+          schema:
+            type: string
+        - name: classId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Result"
+    post:
+      operationId: submitResult
+      tags: [results]
+      summary: Submit assessment result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitResultRequest"
+      responses:
+        "201":
+          description: Result submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Result"
+
+  /results/{resultId}:
+    get:
+      operationId: getResult
+      tags: [results]
+      summary: Get result by ID
+      parameters:
+        - name: resultId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Result details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResultDetail"
+
+  /syllabus/upload:
+    post:
+      operationId: uploadSyllabus
+      tags: [syllabus]
+      summary: Upload syllabus PDF and generate questions with AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadSyllabusRequest"
+      responses:
+        "200":
+          description: Generated questions from syllabus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeneratedQuestionsResponse"
+
+  /analytics/overview:
+    get:
+      operationId: getAnalyticsOverview
+      tags: [analytics]
+      summary: Get analytics overview
+      parameters:
+        - name: classId
+          in: query
+          schema:
+            type: string
+        - name: assessmentType
+          in: query
+          schema:
+            type: string
+            enum: [CAASPP, ELPAC]
+      responses:
+        "200":
+          description: Analytics overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsOverview"
+
+  /analytics/student/{studentId}:
+    get:
+      operationId: getStudentAnalytics
+      tags: [analytics]
+      summary: Get analytics for a specific student
+      parameters:
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Student analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentAnalytics"
+
+  /classes:
+    get:
+      operationId: listClasses
+      tags: [users]
+      summary: List all classes
+      responses:
+        "200":
+          description: List of classes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Class"
+    post:
+      operationId: createClass
+      tags: [users]
+      summary: Create a class
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClassRequest"
+      responses:
+        "201":
+          description: Class created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Class"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required: [error, message]
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required: [success]
+
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required: [username, password]
+
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        token:
+          type: string
+      required: [user, token]
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [student, teacher, admin]
+        grade:
+          type: string
+          nullable: true
+        classIds:
+          type: array
+          items:
+            type: string
+          nullable: true
+        className:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, username, name, email, role, createdAt]
+
+    CreateUserRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+        role:
+          type: string
+          enum: [student, teacher, admin]
+        grade:
+          type: string
+          nullable: true
+        classIds:
+          type: array
+          items:
+            type: string
+          nullable: true
+      required: [username, name, email, password, role]
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        classIds:
+          type: array
+          items:
+            type: string
+          nullable: true
+        grade:
+          type: string
+          nullable: true
+
+    Assessment:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+          enum: [CAASPP, ELPAC]
+        subject:
+          type: string
+        grade:
+          type: string
+        description:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+          description: Duration in minutes
+        questionCount:
+          type: integer
+        difficulty:
+          type: string
+          enum: [easy, medium, hard, mixed]
+        status:
+          type: string
+          enum: [active, draft, archived]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, title, type, subject, grade, duration, questionCount, difficulty, status, createdAt]
+
+    AssessmentWithQuestions:
+      allOf:
+        - $ref: "#/components/schemas/Assessment"
+        - type: object
+          properties:
+            questions:
+              type: array
+              items:
+                $ref: "#/components/schemas/Question"
+          required: [questions]
+
+    CreateAssessmentRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        type:
+          type: string
+          enum: [CAASPP, ELPAC]
+        subject:
+          type: string
+        grade:
+          type: string
+        description:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+        difficulty:
+          type: string
+          enum: [easy, medium, hard, mixed]
+      required: [title, type, subject, grade, duration, difficulty]
+
+    Question:
+      type: object
+      properties:
+        id:
+          type: string
+        assessmentId:
+          type: string
+        text:
+          type: string
+        audioScript:
+          type: string
+          nullable: true
+          description: Optional transcript spoken by the AudioPlayer instead of the question text
+        type:
+          type: string
+          enum: [multiple_choice, short_answer, essay, listening, speaking]
+        options:
+          type: array
+          nullable: true
+          items:
+            type: string
+        correctAnswer:
+          type: string
+          nullable: true
+        explanation:
+          type: string
+          nullable: true
+        points:
+          type: integer
+        difficulty:
+          type: string
+          enum: [easy, medium, hard]
+        skill:
+          type: string
+          nullable: true
+          description: ELA/Math/Science skill or ELPAC language skill
+        orderIndex:
+          type: integer
+      required: [id, assessmentId, text, type, points, difficulty, orderIndex]
+
+    CreateQuestionRequest:
+      type: object
+      properties:
+        text:
+          type: string
+        audioScript:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [multiple_choice, short_answer, essay, listening, speaking]
+        options:
+          type: array
+          nullable: true
+          items:
+            type: string
+        correctAnswer:
+          type: string
+          nullable: true
+        explanation:
+          type: string
+          nullable: true
+        points:
+          type: integer
+        difficulty:
+          type: string
+          enum: [easy, medium, hard]
+        skill:
+          type: string
+          nullable: true
+        orderIndex:
+          type: integer
+      required: [text, type, points, difficulty, orderIndex]
+
+    Result:
+      type: object
+      properties:
+        id:
+          type: string
+        assessmentId:
+          type: string
+        assessmentTitle:
+          type: string
+        assessmentType:
+          type: string
+          enum: [CAASPP, ELPAC]
+        studentId:
+          type: string
+        studentName:
+          type: string
+        score:
+          type: number
+        maxScore:
+          type: number
+        percentage:
+          type: number
+        passed:
+          type: boolean
+        timeSpent:
+          type: integer
+          description: Time spent in seconds
+        completedAt:
+          type: string
+          format: date-time
+      required: [id, assessmentId, assessmentTitle, assessmentType, studentId, studentName, score, maxScore, percentage, passed, completedAt]
+
+    ResultDetail:
+      allOf:
+        - $ref: "#/components/schemas/Result"
+        - type: object
+          properties:
+            answers:
+              type: array
+              items:
+                $ref: "#/components/schemas/AnswerDetail"
+          required: [answers]
+
+    AnswerDetail:
+      type: object
+      properties:
+        questionId:
+          type: string
+        questionText:
+          type: string
+        answer:
+          type: string
+        correctAnswer:
+          type: string
+          nullable: true
+        isCorrect:
+          type: boolean
+        points:
+          type: number
+        maxPoints:
+          type: number
+      required: [questionId, questionText, answer, isCorrect, points, maxPoints]
+
+    SubmitResultRequest:
+      type: object
+      properties:
+        assessmentId:
+          type: string
+        studentId:
+          type: string
+        answers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnswerSubmission"
+        timeSpent:
+          type: integer
+      required: [assessmentId, studentId, answers, timeSpent]
+
+    AnswerSubmission:
+      type: object
+      properties:
+        questionId:
+          type: string
+        answer:
+          type: string
+      required: [questionId, answer]
+
+    UploadSyllabusRequest:
+      type: object
+      properties:
+        syllabusText:
+          type: string
+          description: Extracted text content from the PDF syllabus
+        fileName:
+          type: string
+        assessmentType:
+          type: string
+          enum: [CAASPP, ELPAC]
+        subject:
+          type: string
+        grade:
+          type: string
+        difficulty:
+          type: string
+          enum: [easy, medium, hard, mixed]
+        questionCount:
+          type: integer
+          minimum: 5
+          maximum: 50
+        listeningRubric:
+          type: string
+          description: Optional custom rubric for listening questions
+        readingRubric:
+          type: string
+          description: Optional custom rubric for reading questions
+        writingRubric:
+          type: string
+          description: Optional custom rubric for writing questions
+      required: [syllabusText, fileName, assessmentType, subject, grade, difficulty, questionCount]
+
+    GeneratedQuestionsResponse:
+      type: object
+      properties:
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Question"
+        assessmentTitle:
+          type: string
+        summary:
+          type: string
+      required: [questions, assessmentTitle, summary]
+
+    AnalyticsOverview:
+      type: object
+      properties:
+        totalStudents:
+          type: integer
+        totalAssessments:
+          type: integer
+        averageScore:
+          type: number
+        passRate:
+          type: number
+        caasppStats:
+          $ref: "#/components/schemas/AssessmentTypeStats"
+        elpacStats:
+          $ref: "#/components/schemas/AssessmentTypeStats"
+        recentResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/Result"
+        scoreDistribution:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreBucket"
+        subjectPerformance:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubjectPerformance"
+      required: [totalStudents, totalAssessments, averageScore, passRate, caasppStats, elpacStats, recentResults, scoreDistribution, subjectPerformance]
+
+    AssessmentTypeStats:
+      type: object
+      properties:
+        totalStudents:
+          type: integer
+        averageScore:
+          type: number
+        passRate:
+          type: number
+        subjectBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubjectPerformance"
+      required: [totalStudents, averageScore, passRate, subjectBreakdown]
+
+    SubjectPerformance:
+      type: object
+      properties:
+        subject:
+          type: string
+        averageScore:
+          type: number
+        passRate:
+          type: number
+        studentCount:
+          type: integer
+      required: [subject, averageScore, passRate, studentCount]
+
+    ScoreBucket:
+      type: object
+      properties:
+        range:
+          type: string
+        count:
+          type: integer
+        percentage:
+          type: number
+      required: [range, count, percentage]
+
+    StudentAnalytics:
+      type: object
+      properties:
+        student:
+          $ref: "#/components/schemas/User"
+        totalAssessments:
+          type: integer
+        averageScore:
+          type: number
+        passRate:
+          type: number
+        recentResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/Result"
+        progressOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProgressPoint"
+        strengthAreas:
+          type: array
+          items:
+            type: string
+        improvementAreas:
+          type: array
+          items:
+            type: string
+      required: [student, totalAssessments, averageScore, passRate, recentResults, progressOverTime, strengthAreas, improvementAreas]
+
+    ProgressPoint:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date-time
+        score:
+          type: number
+        assessmentTitle:
+          type: string
+        assessmentType:
+          type: string
+      required: [date, score, assessmentTitle, assessmentType]
+
+    Class:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        grade:
+          type: string
+        section:
+          type: string
+          nullable: true
+        teacherId:
+          type: string
+        teacherName:
+          type: string
+        studentCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, name, grade, teacherId, teacherName, studentCount, createdAt]
+
+    CreateClassRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        grade:
+          type: string
+        section:
+          type: string
+          nullable: true
+        teacherId:
+          type: string
+      required: [name, grade, teacherId]
