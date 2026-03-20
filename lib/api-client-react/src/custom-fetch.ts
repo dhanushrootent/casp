@@ -305,9 +305,20 @@ export async function customFetch<T = unknown>(
     }
   }
 
-  const requestInfo = { method, url: resolveUrl(input) };
+  // In local dev, Vite proxies `/api/*` to the backend.
+  // In production (static hosting), there is no proxy, so allow overriding the
+  // API origin via `VITE_API_BASE_URL` (e.g. https://your-backend.onrender.com).
+  const apiBaseUrl = (import.meta as unknown as { env?: { VITE_API_BASE_URL?: string } })
+    ?.env?.VITE_API_BASE_URL;
+  const resolvedUrl = resolveUrl(input);
+  const finalInput =
+    apiBaseUrl && typeof input === "string" && input.startsWith("/api")
+      ? `${apiBaseUrl.replace(/\/$/, "")}${resolvedUrl}`
+      : input;
 
-  const response = await fetch(input, { ...init, method, headers });
+  const requestInfo = { method, url: resolveUrl(finalInput) };
+
+  const response = await fetch(finalInput, { ...init, method, headers });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);
