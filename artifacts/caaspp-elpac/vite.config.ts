@@ -48,22 +48,10 @@ export default defineConfig({
       strict: true,
       deny: ["**/.*"],
     },
-    proxy: {
-      "/api": {
-        target: "http://20.197.33.76",
-        changeOrigin: true,
-      },
-    },
   },
   preview: {
     port,
     host: "0.0.0.0",
     allowedHosts: true,
-    proxy: {
-      "/api": {
-        target: "http://20.197.33.76",
-        changeOrigin: true,
-      },
-    },
   },
 });
