@@ -9,6 +9,18 @@ export type BodyType<T> = T;
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
+/** Set from the app (e.g. `caaspp-elpac/src/config/api.ts`) before any API calls. */
+let configuredApiBaseUrl: string | null = null;
+
+/**
+ * Point generated `/api/*` requests at a full origin (e.g. `https://your-api.onrender.com`).
+ * Pass `""` to use relative URLs only (same origin as the page).
+ */
+export function configureApiClient(options: { baseUrl: string }): void {
+  const trimmed = options.baseUrl.trim();
+  configuredApiBaseUrl = trimmed === "" ? null : trimmed.replace(/\/$/, "");
+}
+
 function isRequest(input: RequestInfo | URL): input is Request {
   return typeof Request !== "undefined" && input instanceof Request;
 }
@@ -305,15 +317,12 @@ export async function customFetch<T = unknown>(
     }
   }
 
-  // In local dev, Vite proxies `/api/*` to the backend.
-  // In production (static hosting), there is no proxy, so allow overriding the
-  // API origin via `VITE_API_BASE_URL` (e.g. https://your-backend.onrender.com).
-  const apiBaseUrl = (import.meta as unknown as { env?: { VITE_API_BASE_URL?: string } })
-    ?.env?.VITE_API_BASE_URL;
   const resolvedUrl = resolveUrl(input);
   const finalInput =
-    apiBaseUrl && typeof input === "string" && input.startsWith("/api")
-      ? `${apiBaseUrl.replace(/\/$/, "")}${resolvedUrl}`
+    configuredApiBaseUrl &&
+    typeof input === "string" &&
+    input.startsWith("/api")
+      ? `${configuredApiBaseUrl}${resolvedUrl}`
       : input;
 
   const requestInfo = { method, url: resolveUrl(finalInput) };
