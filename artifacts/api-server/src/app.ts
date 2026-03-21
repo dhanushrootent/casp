@@ -4,10 +4,15 @@ import router from "./routes";
 
 const app: Express = express();
 
-app.use(cors());
+app.use(
+    cors({
+        origin: [
+            "http://localhost:5173",
+            "https://casp-tu0m.onrender.com",
+        ],
+    }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 app.use("/api", router);
-
 export default app;

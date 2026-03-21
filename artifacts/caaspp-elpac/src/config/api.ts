@@ -8,4 +8,4 @@
  * - Deployed UI over HTTPS: use an **https** URL (ngrok, Render API URL, etc.)
  *   or the browser will block requests (mixed content).
  */
-export const API_BASE_URL = "http://20.197.33.76";
+export const API_BASE_URL = "https://reissuable-nisha-pastiest.ngrok-free.dev";
