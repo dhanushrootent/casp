@@ -1,0 +1,3 @@
+# Netlify-style SPA fallback (copied to dist by Vite). Render ignores this file —
+# add a dashboard rule instead (see DEPLOY-RENDER.md).
+/*    /index.html   200
