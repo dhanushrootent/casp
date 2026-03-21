@@ -327,6 +327,15 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(finalInput) };
 
+  // Ngrok free tier can serve an interstitial HTML page without your API's CORS
+  // headers; the browser surfaces that as a CORS error. This header skips it.
+  if (typeof window !== "undefined") {
+    const u = requestInfo.url;
+    if (/ngrok/i.test(u) && !headers.has("ngrok-skip-browser-warning")) {
+      headers.set("ngrok-skip-browser-warning", "true");
+    }
+  }
+
   const response = await fetch(finalInput, { ...init, method, headers });
 
   if (!response.ok) {
