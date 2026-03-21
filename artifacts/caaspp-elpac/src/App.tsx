@@ -51,6 +51,11 @@ function Router() {
 
       <Route path="/login" component={Login} />
 
+      {/* If the host used a Redirect to index.html, the path becomes /index.html and no route matches. */}
+      <Route path="/index.html">
+        {() => <Redirect to="/" />}
+      </Route>
+
       {/* Student Routes */}
       <Route path="/student/dashboard">
         {() => <ProtectedRoute component={StudentDashboard} allowedRoles={['student']} />}
