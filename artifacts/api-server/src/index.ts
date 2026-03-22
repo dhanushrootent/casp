@@ -1,3 +1,4 @@
+import "./load-env";
 import app from "./app";
 
 const rawPort = process.env["PORT"];
