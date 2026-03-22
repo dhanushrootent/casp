@@ -71,6 +71,49 @@ export default function TeacherStudents() {
             </div>
           </div>
         </div>
+
+        {/* Detailed Transcript View */}
+        {(analytics as any)?.detailedTranscript?.length > 0 && (
+          <div className="mt-8">
+            <h4 className="text-md font-bold text-slate-900 border-b border-blue-200 pb-2 mb-4">Detailed Assessment Transcript</h4>
+            <div className="space-y-6">
+              {(analytics as any).detailedTranscript.map((transcript: any, idx: number) => (
+                <div key={idx} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="font-semibold text-slate-800">{transcript.testTitle}</span>
+                    <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">Score: {Math.round(transcript.score)}%</span>
+                  </div>
+                  <div className="space-y-3">
+                    {transcript.answeredQuestions?.length > 0 ? transcript.answeredQuestions.map((q: any, qIdx: number) => (
+                      <div key={qIdx} className={`p-3 rounded-lg border-l-4 text-sm ${q.isCorrect ? 'bg-emerald-50/50 border-emerald-400' : q.isCorrect === false ? 'bg-red-50/50 border-red-400' : 'bg-slate-50 border-slate-300'}`}>
+                        <div className="flex gap-2 mb-2">
+                          <span className="font-semibold shrink-0">Q{qIdx + 1}:</span>
+                          <span className="text-slate-700">{q.text || "Unknown Question"}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs tracking-wider uppercase font-semibold text-slate-500">Skill:</span>
+                          <span className="text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-700">{q.skill || "General"}</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                          <div>
+                            <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Student Answer:</span>
+                            <span className={`font-medium ${q.isCorrect ? 'text-emerald-700' : 'text-red-700'}`}>{q.studentAnswer || "No Answer"}</span>
+                          </div>
+                          <div>
+                            <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Correct Answer:</span>
+                            <span className="font-medium text-emerald-700">{q.correctAnswer || "Subjective"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="text-sm text-slate-500 italic">No answered questions recorded.</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   };

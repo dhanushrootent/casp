@@ -162,6 +162,7 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
   let strengthAreas: string[] = [];
   let improvementAreas: string[] = [];
   let mentorInsights = "Gemini is analyzing the performance data...";
+  let performanceBrief: any[] = [];
 
   if (results.length > 0) {
     const questionIds = Array.from(new Set(results.flatMap(r => r.answers.map(a => a.questionId))));
@@ -197,7 +198,7 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
     improvementAreas = skillAverages.filter(s => s.percent < 60).map(s => s.skill);
 
     // AI Mentor Insights Generation
-    const performanceBrief = results.map(r => {
+    performanceBrief = results.map(r => {
       const answeredQuestions = r.answers.map(a => {
         const q = questionMap[a.questionId];
         const isCorrect = q && q.correctAnswer ? (a.answer === q.correctAnswer) : null;
@@ -235,9 +236,13 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       mentorInsights = response.text || "Insight generation failed.";
-    } catch (e) {
-      console.error("AI Insights Error:", e);
-      mentorInsights = "Unable to generate insights at this moment due to a connection issue.";
+    } catch (e: any) {
+      console.error("AI Insights Error:", e?.message || e);
+      if (e?.message?.includes("429") || e?.message?.includes("Quota") || e?.message?.includes("exhausted")) {
+        mentorInsights = "Unable to generate insights: The Gemini API key has exceeded its rate limit or free tier quota. Please try again later or check your Google Cloud Console billing.";
+      } else {
+        mentorInsights = "Unable to generate insights at this moment due to a connection issue.";
+      }
     }
   }
 
@@ -260,7 +265,8 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
     progressOverTime,
     strengthAreas,
     improvementAreas,
-    mentorInsights
+    mentorInsights,
+    detailedTranscript: performanceBrief
   });
 });
 

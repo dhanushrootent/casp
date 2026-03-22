@@ -31,6 +31,7 @@ async function extractTextFromPDF(file: File): Promise<string> {
 
 export default function SyllabusUpload() {
   const [file, setFile] = useState<File | null>(null);
+  const [assessmentType, setAssessmentType] = useState<'CAASPP' | 'ELPAC'>('CAASPP');
   const [subject, setSubject] = useState('English Language Arts');
   const [grade, setGrade] = useState('8');
   const [difficulty, setDifficulty] = useState<'easy'|'medium'|'hard'|'mixed'>('medium');
@@ -90,7 +91,7 @@ export default function SyllabusUpload() {
       data: {
         syllabusText: extractedText,
         fileName: file.name,
-        assessmentType: subject.includes('Language') ? 'ELPAC' : 'CAASPP',
+        assessmentType,
         subject,
         grade,
         difficulty,
@@ -126,7 +127,7 @@ export default function SyllabusUpload() {
       const newAssessment = await createAssessmentMutation.mutateAsync({
         data: {
           title: assessmentTitle,
-          type: subject.includes('Language') ? 'ELPAC' : 'CAASPP',
+          type: assessmentType,
           subject,
           grade,
           duration: 60,
@@ -145,6 +146,9 @@ export default function SyllabusUpload() {
             type: q.type,
             options: q.options || [],
             correctAnswer: q.correctAnswer || "",
+            explanation: q.explanation || null,
+            audioScript: q.audioScript || null,
+            skill: q.skill || null,
             points: q.points || 1,
             difficulty: q.difficulty || difficulty,
             orderIndex: q.orderIndex
@@ -170,6 +174,39 @@ export default function SyllabusUpload() {
       });
       setIsSaving(false);
     }
+  };
+
+  const updateQuestionText = (index: number, text: string) => {
+    if (!generatedQuestions) return;
+    const newQs = [...generatedQuestions];
+    newQs[index] = { ...newQs[index], text };
+    setGeneratedQuestions(newQs);
+  };
+
+  const updateOptionText = (qIdx: number, oIdx: number, text: string) => {
+    if (!generatedQuestions) return;
+    const newQs = [...generatedQuestions];
+    const newOpts = [...newQs[qIdx].options];
+    const oldOpt = newQs[qIdx].options[oIdx];
+    newOpts[oIdx] = text;
+    // If the old correct answer was this option, update it too
+    const newCorrect = newQs[qIdx].correctAnswer === oldOpt ? text : newQs[qIdx].correctAnswer;
+    newQs[qIdx] = { ...newQs[qIdx], options: newOpts, correctAnswer: newCorrect };
+    setGeneratedQuestions(newQs);
+  };
+
+  const setCorrectAnswer = (qIdx: number, answer: string) => {
+    if (!generatedQuestions) return;
+    const newQs = [...generatedQuestions];
+    newQs[qIdx] = { ...newQs[qIdx], correctAnswer: answer };
+    setGeneratedQuestions(newQs);
+  };
+
+  const updateAudioScript = (index: number, audioScript: string) => {
+    if (!generatedQuestions) return;
+    const newQs = [...generatedQuestions];
+    newQs[index] = { ...newQs[index], audioScript };
+    setGeneratedQuestions(newQs);
   };
 
   return (
@@ -212,18 +249,31 @@ export default function SyllabusUpload() {
                 <CardTitle>Assessment Settings</CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Subject Area</label>
-                  <select 
-                    className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                    value={subject} onChange={e => setSubject(e.target.value)}
-                  >
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Assessment Type</label>
+                    <select 
+                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
+                      value={assessmentType} onChange={e => setAssessmentType(e.target.value as any)}
+                    >
+                      <option value="CAASPP">CAASPP</option>
+                      <option value="ELPAC">ELPAC</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Subject Area</label>
+                    <select 
+                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
+                      value={subject} onChange={e => setSubject(e.target.value)}
+                    >
                     <option>English Language Arts</option>
                     <option>Mathematics</option>
                     <option>Science</option>
-                    <option>ELPAC Listening/Speaking</option>
+                    <option>Listening/Speaking</option>
                   </select>
                 </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-2">Grade Level</label>
@@ -234,6 +284,9 @@ export default function SyllabusUpload() {
                       {[3,4,5,6,7,8,11].map(g => <option key={g} value={g}>Grade {g}</option>)}
                     </select>
                   </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-2">Difficulty</label>
                     <select 
@@ -350,28 +403,71 @@ export default function SyllabusUpload() {
 
               <div className="space-y-4">
                 {generatedQuestions.map((q, i) => (
-                  <Card key={i} className="overflow-hidden">
-                    <div className="flex border-b border-border bg-gray-50/50 px-4 py-2 text-xs font-semibold text-muted-foreground justify-between">
-                      <span>Question {i + 1} • {q.type.replace('_', ' ').toUpperCase()}</span>
-                      <span>{q.points} Points</span>
+                  <Card key={i} className="overflow-hidden border-2 border-primary/10">
+                    <div className="flex border-b border-border bg-primary/5 px-4 py-2 text-xs font-semibold text-primary/80 justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="bg-primary/10 px-2 py-0.5 rounded text-primary">Q{i + 1}</span>
+                        <span className="uppercase tracking-wider opacity-70">{q.type.replace('_', ' ')}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                         <span className="opacity-70">{q.points} Points</span>
+                         <Badge variant="outline" className="bg-white/50">{q.skill || 'General Skill'}</Badge>
+                      </div>
                     </div>
-                    <CardContent className="p-6">
-                      <p className="text-lg font-medium text-foreground mb-4">{q.text}</p>
+                    <CardContent className="p-6 space-y-4">
+                      <div>
+                        <label className="text-xs font-bold text-muted-foreground uppercase mb-1 block">Question Text</label>
+                        <textarea
+                          className="w-full text-lg font-medium text-foreground bg-white border border-border rounded-xl p-3 focus:ring-2 focus:ring-primary outline-none transition-all resize-none"
+                          value={q.text}
+                          onChange={(e) => updateQuestionText(i, e.target.value)}
+                          rows={2}
+                        />
+                      </div>
+
+                      {q.audioScript !== undefined && (
+                        <div>
+                          <label className="text-xs font-bold text-muted-foreground uppercase mb-1 block">Audio Script (Spoken to student)</label>
+                          <textarea
+                            className="w-full text-sm font-medium text-amber-900 bg-amber-50/30 border border-amber-200 rounded-xl p-3 focus:ring-2 focus:ring-amber-500 outline-none transition-all resize-none"
+                            value={q.audioScript || ''}
+                            onChange={(e) => updateAudioScript(i, e.target.value)}
+                            placeholder="Add a script for the student to listen to..."
+                            rows={3}
+                          />
+                        </div>
+                      )}
+
                       {q.options && q.options.length > 0 && (
-                        <div className="space-y-2">
+                        <div className="space-y-3">
+                          <label className="text-xs font-bold text-muted-foreground uppercase block">Answer Options (Select the dot to mark as correct)</label>
                           {q.options.map((opt: string, oi: number) => (
-                            <div key={oi} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-white">
-                              <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-muted-foreground">
-                                {String.fromCharCode(65 + oi)}
-                              </div>
-                              <span className="text-sm">{opt}</span>
+                            <div key={oi} className={`flex items-center gap-3 p-1 pl-3 rounded-xl border transition-all ${q.correctAnswer === opt ? 'border-emerald-500 bg-emerald-50/30' : 'border-border bg-gray-50/30'}`}>
+                              <button 
+                                onClick={() => setCorrectAnswer(i, opt)}
+                                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all ${q.correctAnswer === opt ? 'bg-emerald-500 text-white shadow-lg' : 'bg-white border-2 border-gray-200 text-gray-400 hover:border-emerald-300'}`}
+                              >
+                                {q.correctAnswer === opt ? <CheckCircle2 className="w-4 h-4" /> : String.fromCharCode(65 + oi)}
+                              </button>
+                              <input
+                                className="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 font-medium"
+                                value={opt}
+                                onChange={(e) => updateOptionText(i, oi, e.target.value)}
+                              />
                               {q.correctAnswer === opt && (
-                                <Badge variant="success" className="ml-auto">Correct Answer</Badge>
+                                <Badge variant="success" className="mr-2">Correct</Badge>
                               )}
                             </div>
                           ))}
                         </div>
                       )}
+
+                      {(q.type === 'short_answer' || q.type === 'essay' || q.type === 'speaking') ? (
+                        <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 italic text-sm text-blue-700">
+                           <Sparkles className="w-4 h-4 inline mr-2" /> 
+                           This is a {q.type} question. No fixed options required.
+                        </div>
+                      ) : null}
                     </CardContent>
                   </Card>
                 ))}

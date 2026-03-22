@@ -168,7 +168,16 @@ export default function AssessmentTake() {
                   <h3 className="text-2xl font-medium text-foreground leading-relaxed flex-1">
                     {currentQ.text}
                   </h3>
-                  <AudioPlayer text={currentQ.audioScript || currentQ.text} buttonSize="default" className="shrink-0" />
+                  <AudioPlayer 
+                    text={
+                      (currentQ.audioScript || currentQ.text) + 
+                      (currentQ.options && currentQ.options.length > 0 
+                        ? '. The options are: ' + currentQ.options.map((opt: string, i: number) => `Option ${String.fromCharCode(65 + i)}: ${opt}`).join('. ') 
+                        : '')
+                    } 
+                    buttonSize="default" 
+                    className="shrink-0" 
+                  />
                 </div>
 
                 {currentQ.options && currentQ.options.length > 0 && (
@@ -220,7 +229,7 @@ export default function AssessmentTake() {
                   </div>
                 )}
 
-                {['short_answer', 'essay', 'speaking'].includes(currentQ.type) && (
+                {['short_answer', 'essay', 'speaking', 'listening'].includes(currentQ.type) && (
                   <textarea
                     className="w-full h-40 p-5 rounded-xl border-2 border-border focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-lg resize-none disabled:opacity-75 disabled:bg-gray-50"
                     placeholder={currentQ.type === 'speaking' ? "Type out what you would say..." : "Type your answer here..."}

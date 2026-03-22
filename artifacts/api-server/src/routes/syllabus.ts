@@ -42,14 +42,16 @@ ${writingRubric ? `- Writing Rubric Focus: ${writingRubric}` : ''}
 
 REQUIREMENTS:
 1. Generate exactly ${questionCount} questions
-2. At least 60% should be multiple_choice type
-3. Include some short_answer questions
-4. For ELPAC, include listening and speaking questions
+2. For CAASPP, at least 60% should be multiple_choice type, plus some short_answer or essay.
+3. For ELPAC, YOU MUST actively use the "listening" and "speaking" question types where appropriate.
+4. The valid values for "type" are: "multiple_choice", "short_answer", "essay", "listening", "speaking".
 5. Each question must align with the syllabus content
 6. Multiple choice questions must have exactly 4 options (A, B, C, D format)
 7. Include correct answers for multiple_choice questions
 8. DO NOT use images in your questions or describe images in brackets (e.g. [Image of...]). Even for ELPAC Speaking, rely on purely text-based situations.
 9. For listening questions, place the spoken transcript exclusively in the "audioScript" field, and DO NOT include the transcript in the "text" field. The "text" field should ONLY contain the question the student must answer.
+10. For Scientific Reasoning or Comprehension items, ALWAYS provide a detailed "audioScript" that sets the scene or provides the data, allowing the student to "hear" the scientific scenario or the passage before answering.
+11. If a question is a simple multiple choice without text to listen to, set "audioScript" to null.
 
 Return ONLY a valid JSON object in this exact format:
 {
@@ -58,9 +60,9 @@ Return ONLY a valid JSON object in this exact format:
   "questions": [
     {
       "text": "question text here (NO transcripts here)",
-      "audioScript": "Optional transcript that will be spoken aloud to the student",
-      "type": "multiple_choice",
-      "options": ["First option", "Second option", "Third option", "Fourth option"],
+      "audioScript": "For listening/speaking questions, place the transcript here.",
+      "type": "multiple_choice", // valid values: multiple_choice, short_answer, essay, listening, speaking
+      "options": ["First option", "Second option"], // ONLY if multiple_choice
       "correctAnswer": "First option",
       "explanation": "Brief explanation of why this is correct",
       "points": 1,
@@ -75,7 +77,7 @@ For short_answer questions, omit "options" and "correctAnswer".
 For essay questions, omit "options" and "correctAnswer".`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-1.5-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: { maxOutputTokens: 8192 },
   });

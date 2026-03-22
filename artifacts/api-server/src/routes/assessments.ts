@@ -61,7 +61,7 @@ router.get("/assessments/:assessmentId/questions", async (req: Request, res: Res
 
 router.post("/assessments/:assessmentId/questions", async (req: Request, res: Response) => {
   const { assessmentId } = req.params;
-  const { text, type, options, correctAnswer, explanation, points, difficulty, skill, orderIndex } = req.body;
+  const { text, type, options, correctAnswer, explanation, audioScript, points, difficulty, skill, orderIndex } = req.body;
 
   const id = uuidv4();
   const [question] = await db.insert(questionsTable).values({
@@ -72,6 +72,7 @@ router.post("/assessments/:assessmentId/questions", async (req: Request, res: Re
     options: options ?? null,
     correctAnswer: correctAnswer ?? null,
     explanation: explanation ?? null,
+    audioScript: audioScript ?? null,
     points,
     difficulty,
     skill: skill ?? null,
