@@ -1,7 +1,8 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
-import { resultsTable, assessmentsTable, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { resultsTable, assessmentsTable, usersTable, questionsTable } from "@workspace/db";
+import { eq, inArray } from "drizzle-orm";
+import { ai } from "@workspace/integrations-gemini-ai";
 
 const router: IRouter = Router();
 
@@ -157,13 +158,88 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
     subjectScores[subject].push(r.percentage);
   }
 
-  const subjectAverages = Object.entries(subjectScores).map(([subject, scores]) => ({
-    subject,
-    avg: scores.reduce((s, v) => s + v, 0) / scores.length,
-  }));
+  // Define strength/improvement at the skill (concept) level
+  let strengthAreas: string[] = [];
+  let improvementAreas: string[] = [];
+  let mentorInsights = "Gemini is analyzing the performance data...";
 
-  const strengthAreas = subjectAverages.filter(s => s.avg >= 75).map(s => s.subject);
-  const improvementAreas = subjectAverages.filter(s => s.avg < 65).map(s => s.subject);
+  if (results.length > 0) {
+    const questionIds = Array.from(new Set(results.flatMap(r => r.answers.map(a => a.questionId))));
+    const questions = questionIds.length > 0
+      ? await db.select().from(questionsTable).where(inArray(questionsTable.id, questionIds))
+      : [];
+    const questionMap = Object.fromEntries(questions.map(q => [q.id, q]));
+
+    // Calculate skill-based averages
+    const skillStats: Record<string, { total: number; correct: number }> = {};
+    for (const r of results) {
+      for (const a of r.answers) {
+        const q = questionMap[a.questionId];
+        if (!q || !q.skill) continue;
+        if (!skillStats[q.skill]) skillStats[q.skill] = { total: 0, correct: 0 };
+        skillStats[q.skill].total++;
+        if (q.correctAnswer && a.answer === q.correctAnswer) {
+          skillStats[q.skill].correct++;
+        } else if (q.type === 'short_answer' || q.type === 'essay' || q.type === 'speaking') {
+          // For non-MC questions, assume "some partial credit" if test score was high or exclude
+          // For now, simpler: use result percentage as proxy if skill is present
+          if (r.percentage >= 70) skillStats[q.skill].correct++;
+        }
+      }
+    }
+
+    const skillAverages = Object.entries(skillStats).map(([skill, stats]) => ({
+      skill,
+      percent: (stats.correct / stats.total) * 100
+    }));
+
+    strengthAreas = skillAverages.filter(s => s.percent >= 75).map(s => s.skill);
+    improvementAreas = skillAverages.filter(s => s.percent < 60).map(s => s.skill);
+
+    // AI Mentor Insights Generation
+    const performanceBrief = results.map(r => {
+      const answeredQuestions = r.answers.map(a => {
+        const q = questionMap[a.questionId];
+        const isCorrect = q && q.correctAnswer ? (a.answer === q.correctAnswer) : null;
+        return {
+          text: q?.text,
+          skill: q?.skill,
+          studentAnswer: a.answer,
+          correctAnswer: q?.correctAnswer,
+          isCorrect
+        };
+      });
+
+      return {
+        testTitle: assessmentMap[r.assessmentId]?.title,
+        score: r.percentage,
+        answeredQuestions
+      };
+    });
+
+    const prompt = `You are an AI Education Mentor. Analyze the following student performance data and provide a concise (max 150 words) detailed explanation for their teacher.
+    Student Name: ${student.name}
+    Performance History (Contains both right and wrong answers to help gauge strengths and weaknesses): ${JSON.stringify(performanceBrief)}
+
+    TASK:
+    1. Identify specific academic concepts or skills the student is consistently getting WRONG (weaknesses).
+    2. Identify specific academic concepts or skills the student is getting RIGHT (strengths).
+    3. Explain WHY they might be struggling based on the incorrect answers.
+    4. Provide actionable training recommendations for the teacher to help this student improve.
+
+    FORMAT: Provide a professional, encouraging analysis in plain text. No markdown formatting.`;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      });
+      mentorInsights = response.text || "Insight generation failed.";
+    } catch (e) {
+      console.error("AI Insights Error:", e);
+      mentorInsights = "Unable to generate insights at this moment due to a connection issue.";
+    }
+  }
 
   return res.json({
     student: {
@@ -184,6 +260,7 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
     progressOverTime,
     strengthAreas,
     improvementAreas,
+    mentorInsights
   });
 });
 

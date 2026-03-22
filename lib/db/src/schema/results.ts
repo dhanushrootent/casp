@@ -12,6 +12,7 @@ export const resultsTable = pgTable("results", {
   passed: boolean("passed").notNull(),
   timeSpent: integer("time_spent").notNull(),
   answers: jsonb("answers").$type<{ questionId: string; answer: string }[]>().notNull(),
+  feedback: text("feedback"),
   completedAt: timestamp("completed_at").defaultNow().notNull(),
 });
 

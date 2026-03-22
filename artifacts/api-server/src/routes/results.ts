@@ -40,6 +40,7 @@ router.get("/results", async (req: Request, res: Response) => {
     passed: Boolean(r.passed),
     timeSpent: Number(r.timeSpent) || 0,
     completedAt: r.completedAt,
+    feedback: r.feedback,
   }));
 
   if (classId) {
@@ -82,6 +83,13 @@ router.post("/results", async (req: Request, res: Response) => {
   const passed = percentage >= 60;
   const safeTimeSpent = Number(timeSpent) || 0;
 
+  let feedback = "Great job!";
+  if (percentage < 60) {
+    feedback = "You should focus on reviewing the core concepts, specifically the reading and writing rubrics covered in this assessment.";
+  } else if (percentage < 80) {
+    feedback = "Good work. Focus on citing more specific evidence in the future to improve your score further.";
+  }
+
   const id = uuidv4();
   const [result] = await db.insert(resultsTable).values({
     id,
@@ -93,6 +101,7 @@ router.post("/results", async (req: Request, res: Response) => {
     passed,
     timeSpent: safeTimeSpent,
     answers,
+    feedback,
   }).returning();
 
   return res.status(201).json({
@@ -108,6 +117,7 @@ router.post("/results", async (req: Request, res: Response) => {
     passed: Boolean(result.passed),
     timeSpent: Number(result.timeSpent) || 0,
     completedAt: result.completedAt,
+    feedback: result.feedback,
   });
 });
 
@@ -155,6 +165,7 @@ router.get("/results/:resultId", async (req: Request, res: Response) => {
     passed: Boolean(result.passed),
     timeSpent: Number(result.timeSpent) || 0,
     completedAt: result.completedAt,
+    feedback: result.feedback,
     answers: answerDetails,
   });
 });
