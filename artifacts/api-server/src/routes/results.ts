@@ -1,56 +1,105 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import { resultsTable, assessmentsTable, questionsTable, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
 const router: IRouter = Router();
 
+function firstQueryString(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+  return undefined;
+}
+
+function completedAtMs(d: Date | string | null | undefined): number {
+  if (d instanceof Date) return d.getTime();
+  if (typeof d === "string") return new Date(d).getTime();
+  return 0;
+}
+
 router.get("/results", async (req: Request, res: Response) => {
-  const { studentId, assessmentId, classId } = req.query;
+  const studentId = firstQueryString(req.query["studentId"]);
+  const assessmentId = firstQueryString(req.query["assessmentId"]);
+  const classId = firstQueryString(req.query["classId"]);
 
-  let results = await db.select().from(resultsTable);
+  try {
+    const conditions = [];
+    if (studentId) conditions.push(eq(resultsTable.studentId, studentId));
+    if (assessmentId) conditions.push(eq(resultsTable.assessmentId, assessmentId));
 
-  if (studentId) results = results.filter(r => r.studentId === studentId);
-  if (assessmentId) results = results.filter(r => r.assessmentId === assessmentId);
+    const baseQuery = db.select().from(resultsTable);
+    const results =
+      conditions.length === 0
+        ? await baseQuery.orderBy(desc(resultsTable.completedAt))
+        : conditions.length === 1
+          ? await baseQuery
+              .where(conditions[0])
+              .orderBy(desc(resultsTable.completedAt))
+          : await baseQuery
+              .where(and(...conditions))
+              .orderBy(desc(resultsTable.completedAt));
 
-  const assessmentIds = [...new Set(results.map(r => r.assessmentId))];
-  const studentIds = [...new Set(results.map(r => r.studentId))];
+    const assessmentIds = [...new Set(results.map((r) => r.assessmentId))];
+    const studentIds = [...new Set(results.map((r) => r.studentId))];
 
-  const assessments = assessmentIds.length > 0
-    ? await db.select().from(assessmentsTable)
-    : [];
-  const students = studentIds.length > 0
-    ? await db.select().from(usersTable)
-    : [];
+    const assessments =
+      assessmentIds.length > 0
+        ? await db
+            .select()
+            .from(assessmentsTable)
+            .where(inArray(assessmentsTable.id, assessmentIds))
+        : [];
+    const students =
+      studentIds.length > 0
+        ? await db
+            .select()
+            .from(usersTable)
+            .where(inArray(usersTable.id, studentIds))
+        : [];
 
-  const assessmentMap = Object.fromEntries(assessments.map(a => [a.id, a]));
-  const studentMap = Object.fromEntries(students.map(s => [s.id, s]));
+    const assessmentMap = Object.fromEntries(assessments.map((a) => [a.id, a]));
+    const studentMap = Object.fromEntries(students.map((s) => [s.id, s]));
 
-  let enriched = results.map(r => ({
-    id: r.id,
-    assessmentId: r.assessmentId,
-    assessmentTitle: assessmentMap[r.assessmentId]?.title ?? "Unknown",
-    assessmentType: assessmentMap[r.assessmentId]?.type ?? "CAASPP",
-    studentId: r.studentId,
-    studentName: studentMap[r.studentId]?.name ?? "Unknown",
-    score: Number(r.score) || 0,
-    maxScore: Number(r.maxScore) || 0,
-    percentage: Number(r.percentage) || 0,
-    passed: Boolean(r.passed),
-    timeSpent: Number(r.timeSpent) || 0,
-    completedAt: r.completedAt,
-    feedback: r.feedback,
-  }));
+    let enriched = results.map((r) => ({
+      id: r.id,
+      assessmentId: r.assessmentId,
+      assessmentTitle: assessmentMap[r.assessmentId]?.title ?? "Unknown",
+      assessmentType: assessmentMap[r.assessmentId]?.type ?? "CAASPP",
+      studentId: r.studentId,
+      studentName: studentMap[r.studentId]?.name ?? "Unknown",
+      score: Number(r.score) || 0,
+      maxScore: Number(r.maxScore) || 0,
+      percentage: Number(r.percentage) || 0,
+      passed: Boolean(r.passed),
+      timeSpent: Number(r.timeSpent) || 0,
+      completedAt: r.completedAt,
+      feedback: r.feedback,
+    }));
 
-  if (classId) {
-    const classStudents = students.filter(s => s.classIds?.includes(classId as string)).map(s => s.id);
-    enriched = enriched.filter(r => classStudents.includes(r.studentId));
+    if (classId) {
+      const classStudents = students
+        .filter((s) => s.classIds?.includes(classId))
+        .map((s) => s.id);
+      enriched = enriched.filter((r) => classStudents.includes(r.studentId));
+    }
+
+    enriched.sort(
+      (a, b) => completedAtMs(b.completedAt) - completedAtMs(a.completedAt),
+    );
+
+    return res.json(enriched);
+  } catch (err) {
+    const pg =
+      err && typeof err === "object" && "cause" in err
+        ? (err as { cause?: unknown }).cause
+        : undefined;
+    console.error("[GET /api/results]", err, pg ?? "");
+    return res.status(500).json({
+      error: "internal_error",
+      message: "Failed to load results. Check that the database schema is applied (drizzle push).",
+    });
   }
-
-  enriched.sort((a, b) => b.completedAt.getTime() - a.completedAt.getTime());
-
-  return res.json(enriched);
 });
 
 router.post("/results", async (req: Request, res: Response) => {
