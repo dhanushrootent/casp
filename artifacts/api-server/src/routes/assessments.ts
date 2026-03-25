@@ -79,11 +79,22 @@ router.post("/assessments/:assessmentId/questions", async (req: Request, res: Re
     orderIndex,
   }).returning();
 
-  await db.select().from(assessmentsTable).where(eq(assessmentsTable.id, assessmentId as string));
   const allQuestions = await db.select().from(questionsTable).where(eq(questionsTable.assessmentId, assessmentId as string));
   await db.update(assessmentsTable).set({ questionCount: allQuestions.length }).where(eq(assessmentsTable.id, assessmentId as string));
 
   return res.status(201).json(question);
+});
+
+router.delete("/assessments/:assessmentId", async (req: Request, res: Response) => {
+  const { assessmentId } = req.params;
+
+  // Delete all questions associated with the assessment
+  await db.delete(questionsTable).where(eq(questionsTable.assessmentId, assessmentId as string));
+  
+  // Delete the assessment itself
+  await db.delete(assessmentsTable).where(eq(assessmentsTable.id, assessmentId as string));
+
+  return res.json({ success: true, message: "Assessment and associated questions deleted successfully" });
 });
 
 export default router;

@@ -5,7 +5,8 @@ import { v4 as uuidv4 } from "uuid";
 const router: IRouter = Router();
 
 router.post("/syllabus/upload", async (req: Request, res: Response) => {
-  const { syllabusText, fileName, assessmentType, subject, grade, difficulty, questionCount, listeningRubric, readingRubric, writingRubric } = req.body;
+  const { syllabusText, fileName, assessmentType, subject, grade, difficulty, questionCount, listeningRubric, readingRubric, writingRubric, typePercentages, metadata } = req.body;
+  const customTitle = metadata?.assessmentTitle;
 
   if (!syllabusText || syllabusText.length < 50) {
     return res.status(400).json({ error: "bad_request", message: "Syllabus text is too short or empty" });
@@ -22,12 +23,73 @@ router.post("/syllabus/upload", async (req: Request, res: Response) => {
     ? "Focus on English language proficiency: listening comprehension, speaking (describe images/situations), reading comprehension, and writing tasks. Include questions for all four language skills."
     : `Focus on ${subject} academic content standards aligned with California Common Core. Use grade-appropriate academic vocabulary and real-world contexts.`;
 
+  const CAASPP_TYPES = [
+    'multiple_choice_single', 'multiple_choice_multiple', 'highlight_selection', 'matching_classification',
+    'short_answer', 'numeric_response', 'equation_input', 'table_completion',
+    'drag_drop_ordering', 'graph_plotting', 'interactive_table', 'select_text', 'multi_step_problem',
+    'performance_task', 'argumentative_essay', 'explanatory_essay', 'narrative_writing', 'evidence_based_writing',
+    'data_analysis', 'simulation_reasoning'
+  ];
+
+  const ELPAC_TYPES = [
+    'listening_mcq', 'listening_image', 'listening_sequence',
+    'read_aloud', 'describe_picture', 'answer_verbal', 'explain_opinion',
+    'reading_mcq', 'vocabulary_context', 'matching_meaning',
+    'sentence_construction', 'short_response', 'paragraph_writing', 'integrated_task'
+  ];
+
+  let typeGuidance = '';
+  let validTypesString = assessmentType === "CAASPP" 
+    ? CAASPP_TYPES.map(t => `"${t}"`).join(', ') 
+    : ELPAC_TYPES.map(t => `"${t}"`).join(', ');
+
+  if (typePercentages && Object.keys(typePercentages).length > 0) {
+    const types = Object.keys(typePercentages);
+    validTypesString = types.map(t => `"${t}"`).join(', ');
+    
+    const distribution = types.map(t => {
+      const numQuestions = Math.max(1, Math.round((typePercentages[t] / 100) * questionCount));
+      return `- ${t}: exactly ${numQuestions} questions (${typePercentages[t]}%)`;
+    }).join('\n');
+
+    typeGuidance = `\nQUESTION TYPE DISTRIBUTION STRATEGY:\nYou MUST generate exactly ${questionCount} questions following this exact breakdown:\n${distribution}\n`;
+  }
+
+  // Subject-specific guidance
+  let subjectGuidance = "";
+  if (subject === "Mathematics") {
+    subjectGuidance = `
+MATHEMATICS SPECIFIC REQUIREMENTS:
+- Focus on the Major Clusters of the California Common Core State Standards for ${grade}th Grade Math.
+- Ensure questions cover procedural fluidity, conceptual understanding, and application.
+- Use "numeric_response" or "equation_input" for pure math answers.
+- Use "graph_plotting" for coordinate geometry or data visualization tasks.
+- Use "table_completion" for ratio/proportional reasoning or function tables.
+`;
+  } else if (subject === "English Language Arts") {
+    subjectGuidance = `
+ELA SPECIFIC REQUIREMENTS:
+- Use complex, grade-level appropriate reading passages for reading comprehension items.
+- Focus on "evidence-based_writing" or "argumentative_essay" for constructed responses.
+- Use "highlight_selection" for identifying textual evidence or grammatical errors.
+- Include vocabulary in context questions using "multiple_choice_single".
+`;
+  } else if (subject === "Science") {
+    subjectGuidance = `
+SCIENCE SPECIFIC REQUIREMENTS:
+- Focus on Next Generation Science Standards (NGSS) for ${grade}th Grade.
+- Include "simulation_reasoning" or "data_analysis" tasks based on scientific phenomena.
+- Ensure "multi_step_problem" involves multiple phases of scientific inquiry.
+`;
+  }
+
   const prompt = `You are an expert California educational assessment designer creating questions for the ${assessmentType} assessment standard.
 
 SYLLABUS CONTENT:
 ${syllabusText.substring(0, 8000)}
 
 TASK: Generate exactly ${questionCount} high-quality assessment questions for Grade ${grade} ${subject} based on this syllabus.
+${customTitle ? `The title of this assessment will be "${customTitle}". You can use this for context.` : ''}
 
 ASSESSMENT STANDARDS:
 - Assessment Type: ${assessmentType} (${assessmentType === "CAASPP" ? "California Assessment of Student Performance and Progress" : "English Language Proficiency Assessments for California"})
@@ -36,22 +98,22 @@ ASSESSMENT STANDARDS:
 - Difficulty: ${difficulty}
 - ${difficultyGuidance[difficulty] || difficultyGuidance.medium}
 - ${assessmentGuidance}
+${subjectGuidance}
 ${listeningRubric ? `- Listening Rubric Focus: ${listeningRubric}` : ''}
 ${readingRubric ? `- Reading Rubric Focus: ${readingRubric}` : ''}
 ${writingRubric ? `- Writing Rubric Focus: ${writingRubric}` : ''}
-
+${typeGuidance}
 REQUIREMENTS:
-1. Generate exactly ${questionCount} questions
-2. For CAASPP, at least 60% should be multiple_choice type, plus some short_answer or essay.
-3. For ELPAC, YOU MUST actively use the "listening" and "speaking" question types where appropriate.
-4. The valid values for "type" are: "multiple_choice", "short_answer", "essay", "listening", "speaking".
-5. Each question must align with the syllabus content
-6. Multiple choice questions must have exactly 4 options (A, B, C, D format)
-7. Include correct answers for multiple_choice questions
-8. DO NOT use images in your questions or describe images in brackets (e.g. [Image of...]). Even for ELPAC Speaking, rely on purely text-based situations.
-9. For listening questions, place the spoken transcript exclusively in the "audioScript" field, and DO NOT include the transcript in the "text" field. The "text" field should ONLY contain the question the student must answer.
-10. For Scientific Reasoning or Comprehension items, ALWAYS provide a detailed "audioScript" that sets the scene or provides the data, allowing the student to "hear" the scientific scenario or the passage before answering.
-11. If a question is a simple multiple choice without text to listen to, set "audioScript" to null.
+1. Generate exactly ${questionCount} questions total.
+2. ${typePercentages && Object.keys(typePercentages).length > 0 ? "STRICTLY follow the Question Type Distribution Strategy above." : "Ensure a good mix of question types appropriate for the assessment, with at least 50% being multiple choice or similar."}
+3. The valid values for "type" are strictly: ${validTypesString}. Do NOT invent new types.
+4. Each question must align with the syllabus content.
+5. Multiple choice questions must have exactly 4 options (A, B, C, D format). For other types, you may omit "options" and "correctAnswer" if inapplicable.
+6. DO NOT use images in your questions or describe images in brackets (e.g. [Image of...]). Rely on purely text-based situations.
+7. For listening questions, place the spoken transcript exclusively in the "audioScript" field, and DO NOT include the transcript in the "text" field.
+8. For Scientific Reasoning, Data Analysis, or Comprehension items, ALWAYS provide a detailed "audioScript" that sets the scene or provides the data verbally.
+9. For ELPAC: Ensure every question has a "skill" assigned from: "Listening", "Speaking", "Reading", or "Writing".
+10. If a question is a simple multiple choice without text to listen to, set "audioScript" to null.
 
 Return ONLY a valid JSON object in this exact format:
 {
@@ -59,27 +121,29 @@ Return ONLY a valid JSON object in this exact format:
   "summary": "brief 1-2 sentence summary of what the assessment covers",
   "questions": [
     {
-      "text": "question text here (NO transcripts here)",
-      "audioScript": "For listening/speaking questions, place the transcript here.",
-      "type": "multiple_choice", // valid values: multiple_choice, short_answer, essay, listening, speaking
-      "options": ["First option", "Second option"], // ONLY if multiple_choice
-      "correctAnswer": "First option",
-      "explanation": "Brief explanation of why this is correct",
+      "text": "The prompt as seen by the student (e.g. 'Based on the passage you heard, why did...')",
+      "audioScript": "The actual text of the passage/description to be read ALOUD (spoken) to the student.",
+      "type": "one of the valid types listed above",
+      "options": ["Option 1", "Option 2", "Option 3", "Option 4"], // ONLY if MCQ-like
+      "correctAnswer": "The exact string match of the correct option", // Or the exact value for fill-in-the-blank
+      "explanation": "Why this answer is correct",
       "points": 1,
-      "difficulty": "easy",
-      "skill": "Reading Comprehension",
+      "difficulty": "${difficulty}",
+      "skill": "The specific standard or skill being tested",
       "orderIndex": 0
     }
   ]
 }
 
-For short_answer questions, omit "options" and "correctAnswer".
-For essay questions, omit "options" and "correctAnswer".`;
+For questions that don't need options, omit them.`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: { maxOutputTokens: 8192 },
+    config: { 
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json"
+    },
   });
 
   const rawText = response.text ?? "";
@@ -95,7 +159,7 @@ For essay questions, omit "options" and "correctAnswer".`;
     id: uuidv4(),
     assessmentId: "",
     text: q.text,
-    type: q.type || "multiple_choice",
+    type: q.type || (assessmentType === "CAASPP" ? "multiple_choice_single" : "reading_mcq"),
     options: q.options || null,
     correctAnswer: q.correctAnswer || null,
     explanation: q.explanation || null,
@@ -105,10 +169,14 @@ For essay questions, omit "options" and "correctAnswer".`;
     skill: q.skill || null,
     orderIndex: q.orderIndex ?? i,
   }));
-
+console.log({
+    questions,
+    assessmentTitle: customTitle || parsed.assessmentTitle || `${grade} Grade ${subject} Assessment`,
+    summary: parsed.summary || `Assessment covering ${subject} content for Grade ${grade}`,
+  })
   return res.json({
     questions,
-    assessmentTitle: parsed.assessmentTitle || `${grade} Grade ${subject} Assessment`,
+    assessmentTitle: customTitle || parsed.assessmentTitle || `${grade} Grade ${subject} Assessment`,
     summary: parsed.summary || `Assessment covering ${subject} content for Grade ${grade}`,
   });
 });

@@ -173,4 +173,57 @@ router.post("/classes", async (req: Request, res: Response) => {
   });
 });
 
+router.patch("/classes/:classId", async (req: Request, res: Response) => {
+  const { classId } = req.params;
+  const { name, grade, section, teacherId } = req.body;
+
+  const classes = await db.select().from(classesTable).where(eq(classesTable.id, classId as string)).limit(1);
+  if (!classes[0]) {
+    return res.status(404).json({ error: "not_found", message: "Class not found" });
+  }
+
+  const [cls] = await db
+    .update(classesTable)
+    .set({
+      name: name ?? undefined,
+      grade: grade ?? undefined,
+      section: section !== undefined ? section : undefined,
+      teacherId: teacherId ?? undefined,
+    })
+    .where(eq(classesTable.id, classId as string))
+    .returning();
+
+  const teacher = await db.select().from(usersTable).where(eq(usersTable.id, cls.teacherId)).limit(1);
+
+  return res.json({
+    id: cls.id,
+    name: cls.name,
+    grade: cls.grade,
+    section: cls.section,
+    teacherId: cls.teacherId,
+    teacherName: teacher[0]?.name ?? "Unknown",
+    studentCount: cls.studentCount,
+    createdAt: cls.createdAt,
+  });
+});
+
+router.delete("/classes/:classId", async (req: Request, res: Response) => {
+  const { classId } = req.params;
+
+  // First, remove the classId from all users (students)
+  const studentsWithClass = await db.select().from(usersTable).where(arrayContains(usersTable.classIds as any, [classId]));
+  
+  const studentUpdates = studentsWithClass.map(student => {
+    const newClassIds = (student.classIds || []).filter(id => id !== classId);
+    return db.update(usersTable).set({ classIds: newClassIds }).where(eq(usersTable.id, student.id));
+  });
+
+  await Promise.all(studentUpdates);
+
+  // Then delete the class
+  await db.delete(classesTable).where(eq(classesTable.id, classId as string));
+
+  return res.json({ success: true, message: "Class deleted successfully" });
+});
+
 export default router;

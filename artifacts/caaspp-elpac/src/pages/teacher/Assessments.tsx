@@ -2,9 +2,11 @@ import React from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
 import { Badge } from '@/components/ui';
-import { useListAssessments, useListClasses } from '@workspace/api-client-react';
+import { useListAssessments, useListClasses, useDeleteAssessment, getListAssessmentsQueryKey } from '@workspace/api-client-react';
 import { useAuth } from '@/hooks/use-auth';
-import { BookOpen, Clock, BarChart2, Users, ChevronRight, Loader2, GraduationCap } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
+import { BookOpen, Clock, BarChart2, Users, ChevronRight, Loader2, GraduationCap, Trash2 } from 'lucide-react';
 import { Link } from 'wouter';
 
 const difficultyColor: Record<string, string> = {
@@ -23,6 +25,9 @@ export default function TeacherAssessments() {
   const { user } = useAuth();
   const { data: assessments, isLoading: isAssessmentsLoading } = useListAssessments({});
   const { data: classes, isLoading: isClassesLoading } = useListClasses();
+  const deleteAssessmentMutation = useDeleteAssessment();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   
   const myClasses = classes?.filter(c => c.teacherId === user?.id) || [];
   const isLoading = isAssessmentsLoading || isClassesLoading;
@@ -150,6 +155,26 @@ export default function TeacherAssessments() {
                         <span className={`text-xs font-semibold px-2 py-1 rounded-full capitalize ${assessment.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
                           {assessment.status}
                         </span>
+                        <div 
+                          className="p-1 hover:bg-red-50 hover:text-red-600 rounded-md transition-colors text-muted-foreground mr-2"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (confirm(`Are you sure you want to delete "${assessment.title}"? This cannot be undone.`)) {
+                              deleteAssessmentMutation.mutate({ assessmentId: assessment.id }, {
+                                onSuccess: () => {
+                                  toast({ title: 'Assessment deleted' });
+                                  queryClient.invalidateQueries({ queryKey: getListAssessmentsQueryKey({}) });
+                                },
+                                onError: (err: any) => {
+                                  toast({ variant: 'destructive', title: 'Error deleting assessment', description: String(err) });
+                                }
+                              });
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </div>
                         <ChevronRight className="w-4 h-4 text-muted-foreground" />
                       </div>
                     </div>

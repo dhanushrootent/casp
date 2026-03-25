@@ -231,6 +231,17 @@ export const GetAssessmentResponse = zod
   );
 
 /**
+ * @summary Delete an assessment
+ */
+export const DeleteAssessmentParams = zod.object({
+  assessmentId: zod.coerce.string(),
+});
+
+export const DeleteAssessmentResponse = zod.object({
+  success: zod.boolean().optional(),
+});
+
+/**
  * @summary List questions for an assessment
  */
 export const ListAssessmentQuestionsParams = zod.object({
@@ -374,6 +385,17 @@ export const GetResultResponse = zod
   );
 
 /**
+ * @summary Generate AI insights for a specific result
+ */
+export const GenerateResultInsightsParams = zod.object({
+  resultId: zod.coerce.string(),
+});
+
+export const GenerateResultInsightsResponse = zod.object({
+  feedback: zod.string().describe("Generated AI insights for the result"),
+});
+
+/**
  * @summary Upload syllabus PDF and generate questions with AI
  */
 export const uploadSyllabusBodyQuestionCountMin = 5;
@@ -400,6 +422,13 @@ export const UploadSyllabusBody = zod.object({
     .string()
     .optional()
     .describe("Optional custom rubric for reading questions"),
+  metadata: zod
+    .object({
+      assessmentTitle: zod.string().optional(),
+      typePercentages: zod.record(zod.string(), zod.number()).optional(),
+    })
+    .optional()
+    .describe("Additional frontend-provided metadata"),
   writingRubric: zod
     .string()
     .optional()
@@ -586,4 +615,41 @@ export const CreateClassBody = zod.object({
   grade: zod.string(),
   section: zod.string().nullish(),
   teacherId: zod.string(),
+});
+
+/**
+ * @summary Update class details
+ */
+export const UpdateClassParams = zod.object({
+  classId: zod.coerce.string(),
+});
+
+export const UpdateClassBody = zod.object({
+  name: zod.string().optional(),
+  grade: zod.string().optional(),
+  section: zod.string().nullish(),
+  teacherId: zod.string().optional(),
+});
+
+export const UpdateClassResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  grade: zod.string(),
+  section: zod.string().nullish(),
+  teacherId: zod.string(),
+  teacherName: zod.string(),
+  studentCount: zod.number(),
+  createdAt: zod.date(),
+});
+
+/**
+ * @summary Delete a class
+ */
+export const DeleteClassParams = zod.object({
+  classId: zod.coerce.string(),
+});
+
+export const DeleteClassResponse = zod.object({
+  success: zod.boolean(),
+  message: zod.string().optional(),
 });

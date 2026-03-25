@@ -1,10 +1,12 @@
 import React from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
-import { GraduationCap, TrendingUp, CheckCircle, XCircle, Loader2, Info, ChevronDown, ChevronUp, BrainCircuit } from 'lucide-react';
-import { useListUsers, useListResults, useGetStudentAnalytics } from '@workspace/api-client-react';
+import { GraduationCap, TrendingUp, CheckCircle, XCircle, Loader2, Info, ChevronDown, ChevronUp, BrainCircuit, Sparkles } from 'lucide-react';
+import { useListUsers, useListResults, useGetStudentAnalytics, useGenerateResultInsights, getGetStudentAnalyticsQueryKey } from '@workspace/api-client-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
 
 export default function TeacherStudents() {
   const { user } = useAuth();
@@ -28,6 +30,26 @@ export default function TeacherStudents() {
 
   const StudentInsights = ({ studentId }: { studentId: string }) => {
     const { data: analytics, isLoading } = useGetStudentAnalytics(studentId);
+    const generateInsightsMutation = useGenerateResultInsights();
+    const queryClient = useQueryClient();
+    const { toast } = useToast();
+    const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
+
+    const toggleResult = (idx: string) => {
+      setExpandedResults(prev => ({ ...prev, [idx]: !prev[idx] }));
+    };
+
+    const handleGenerateInsights = (resultId: string) => {
+      generateInsightsMutation.mutate({ resultId }, {
+        onSuccess: () => {
+          toast({ title: 'Insights Generated Successfully!' });
+          queryClient.invalidateQueries({ queryKey: getGetStudentAnalyticsQueryKey(studentId) });
+        },
+        onError: () => {
+          toast({ title: 'Failed to generate insights', variant: 'destructive' });
+        }
+      });
+    };
 
     if (isLoading) return <div className="p-8 flex items-center justify-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Analyzing performance data...</div>;
 
@@ -75,42 +97,88 @@ export default function TeacherStudents() {
         {/* Detailed Transcript View */}
         {(analytics as any)?.detailedTranscript?.length > 0 && (
           <div className="mt-8">
-            <h4 className="text-md font-bold text-slate-900 border-b border-blue-200 pb-2 mb-4">Detailed Assessment Transcript</h4>
-            <div className="space-y-6">
-              {(analytics as any).detailedTranscript.map((transcript: any, idx: number) => (
-                <div key={idx} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-                  <div className="flex justify-between items-center mb-4">
-                    <span className="font-semibold text-slate-800">{transcript.testTitle}</span>
-                    <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">Score: {Math.round(transcript.score)}%</span>
-                  </div>
-                  <div className="space-y-3">
-                    {transcript.answeredQuestions?.length > 0 ? transcript.answeredQuestions.map((q: any, qIdx: number) => (
-                      <div key={qIdx} className={`p-3 rounded-lg border-l-4 text-sm ${q.isCorrect ? 'bg-emerald-50/50 border-emerald-400' : q.isCorrect === false ? 'bg-red-50/50 border-red-400' : 'bg-slate-50 border-slate-300'}`}>
-                        <div className="flex gap-2 mb-2">
-                          <span className="font-semibold shrink-0">Q{qIdx + 1}:</span>
-                          <span className="text-slate-700">{q.text || "Unknown Question"}</span>
-                        </div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs tracking-wider uppercase font-semibold text-slate-500">Skill:</span>
-                          <span className="text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-700">{q.skill || "General"}</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
-                          <div>
-                            <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Student Answer:</span>
-                            <span className={`font-medium ${q.isCorrect ? 'text-emerald-700' : 'text-red-700'}`}>{q.studentAnswer || "No Answer"}</span>
+            <h4 className="text-md font-bold text-slate-900 border-b border-blue-200 pb-2 mb-4">Assessment Outcomes</h4>
+            <div className="space-y-4">
+              {(analytics as any).detailedTranscript.map((transcript: any, idx: number) => {
+                const isResultExpanded = expandedResults[idx.toString()];
+                const isGenerating = generateInsightsMutation.isPending && generateInsightsMutation.variables?.resultId === transcript.resultId;
+                return (
+                  <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <button 
+                      onClick={() => toggleResult(idx.toString())}
+                      className="w-full flex justify-between items-center p-4 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        {isResultExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+                        <span className="font-semibold text-slate-800">{transcript.testTitle}</span>
+                      </div>
+                      <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">Score: {Math.round(transcript.score)}%</span>
+                    </button>
+                    
+                    {isResultExpanded && (
+                      <div className="p-5 pt-0 border-t border-slate-100">
+                        {transcript.feedback ? (
+                          <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 mb-6 mt-4 relative">
+                            <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                              <Sparkles className="w-4 h-4" /> AI Feedback on this Result
+                            </h5>
+                            <p className="text-sm text-slate-700 whitespace-pre-wrap">{transcript.feedback}</p>
+                            <button
+                              disabled={isGenerating}
+                              onClick={() => handleGenerateInsights(transcript.resultId)}
+                              className="absolute top-4 right-4 text-xs font-medium bg-white text-blue-600 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors disabled:opacity-50"
+                            >
+                              {isGenerating ? <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> : null}
+                              Regenerate
+                            </button>
                           </div>
-                          <div>
-                            <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Correct Answer:</span>
-                            <span className="font-medium text-emerald-700">{q.correctAnswer || "Subjective"}</span>
+                        ) : (
+                          <div className="bg-slate-50 border-2 border-dashed border-slate-200 p-6 rounded-xl flex flex-col items-center justify-center text-center mb-6 mt-4">
+                            <BrainCircuit className="w-8 h-8 text-slate-300 mb-3" />
+                            <p className="text-sm text-slate-600 mb-4 max-w-sm">Generate AI-powered insights to analyze this specific test result and understand the student's strengths and areas for improvement.</p>
+                            <button 
+                              onClick={() => handleGenerateInsights(transcript.resultId)}
+                              disabled={isGenerating}
+                              className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-5 py-2.5 rounded-xl font-medium hover:shadow-lg hover:shadow-blue-500/25 transition-all w-full md:w-auto disabled:opacity-70 disabled:cursor-not-allowed"
+                            >
+                              {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                              {isGenerating ? "Analyzing Responses..." : "Generate Test Insights"}
+                            </button>
                           </div>
+                        )}
+
+                        <div className="space-y-3">
+                          <h5 className="text-sm font-bold text-slate-800 mb-2">Submitted Answers</h5>
+                          {transcript.answeredQuestions?.length > 0 ? transcript.answeredQuestions.map((q: any, qIdx: number) => (
+                            <div key={qIdx} className={`p-3 rounded-lg border-l-4 text-sm ${q.isCorrect ? 'bg-emerald-50/50 border-emerald-400' : q.isCorrect === false ? 'bg-red-50/50 border-red-400' : 'bg-slate-50 border-slate-300'}`}>
+                              <div className="flex gap-2 mb-2">
+                                <span className="font-semibold shrink-0">Q{qIdx + 1}:</span>
+                                <span className="text-slate-700">{q.text || "Unknown Question"}</span>
+                              </div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-xs tracking-wider uppercase font-semibold text-slate-500">Skill:</span>
+                                <span className="text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-700">{q.skill || "General"}</span>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                                <div>
+                                  <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Student Answer:</span>
+                                  <span className={`font-medium ${q.isCorrect ? 'text-emerald-700' : 'text-red-700'}`}>{q.studentAnswer || "No Answer"}</span>
+                                </div>
+                                <div>
+                                  <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Correct Answer:</span>
+                                  <span className="font-medium text-emerald-700">{q.correctAnswer || "Subjective"}</span>
+                                </div>
+                              </div>
+                            </div>
+                          )) : (
+                            <div className="text-sm text-slate-500 italic p-4 bg-slate-50 rounded-lg border border-slate-100">No answered questions recorded.</div>
+                          )}
                         </div>
                       </div>
-                    )) : (
-                      <div className="text-sm text-slate-500 italic">No answered questions recorded.</div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

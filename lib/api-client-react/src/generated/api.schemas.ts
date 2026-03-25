@@ -44,7 +44,7 @@ export interface User {
   createdAt: string;
 }
 
-export interface LoginResponse {
+export interface LoginResult {
   user: User;
   token: string;
 }
@@ -240,6 +240,11 @@ export interface Result {
   completedAt: string;
 }
 
+export interface ResultInsightsResponse {
+  /** Generated AI insights for the result */
+  feedback: string;
+}
+
 export interface AnswerDetail {
   questionId: string;
   questionText: string;
@@ -284,6 +289,18 @@ export const UploadSyllabusRequestDifficulty = {
   mixed: "mixed",
 } as const;
 
+export type UploadSyllabusRequestMetadataTypePercentages = {
+  [key: string]: number;
+};
+
+/**
+ * Additional frontend-provided metadata
+ */
+export type UploadSyllabusRequestMetadata = {
+  assessmentTitle?: string;
+  typePercentages?: UploadSyllabusRequestMetadataTypePercentages;
+};
+
 export interface UploadSyllabusRequest {
   /** Extracted text content from the PDF syllabus */
   syllabusText: string;
@@ -301,6 +318,8 @@ export interface UploadSyllabusRequest {
   listeningRubric?: string;
   /** Optional custom rubric for reading questions */
   readingRubric?: string;
+  /** Additional frontend-provided metadata */
+  metadata?: UploadSyllabusRequestMetadata;
   /** Optional custom rubric for writing questions */
   writingRubric?: string;
 }
@@ -379,6 +398,13 @@ export interface CreateClassRequest {
   teacherId: string;
 }
 
+export interface UpdateClassRequest {
+  name?: string;
+  grade?: string;
+  section?: string | null;
+  teacherId?: string;
+}
+
 export type ListUsersParams = {
   role?: ListUsersRole;
   classId?: string;
@@ -405,6 +431,10 @@ export const ListAssessmentsType = {
   CAASPP: "CAASPP",
   ELPAC: "ELPAC",
 } as const;
+
+export type DeleteAssessment200 = {
+  success?: boolean;
+};
 
 export type ListResultsParams = {
   studentId?: string;

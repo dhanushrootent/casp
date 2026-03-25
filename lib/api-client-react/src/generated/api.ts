@@ -25,6 +25,7 @@ import type {
   CreateClassRequest,
   CreateQuestionRequest,
   CreateUserRequest,
+  DeleteAssessment200,
   ErrorResponse,
   GeneratedQuestionsResponse,
   GetAnalyticsOverviewParams,
@@ -33,13 +34,15 @@ import type {
   ListResultsParams,
   ListUsersParams,
   LoginRequest,
-  LoginResponse,
+  LoginResult,
   Question,
   Result,
   ResultDetail,
+  ResultInsightsResponse,
   StudentAnalytics,
   SubmitResultRequest,
   SuccessResponse,
+  UpdateClassRequest,
   UpdateUserRequest,
   UploadSyllabusRequest,
   User,
@@ -139,8 +142,8 @@ export const getLoginUrl = () => {
 export const login = async (
   loginRequest: LoginRequest,
   options?: RequestInit,
-): Promise<LoginResponse> => {
-  return customFetch<LoginResponse>(getLoginUrl(), {
+): Promise<LoginResult> => {
+  return customFetch<LoginResult>(getLoginUrl(), {
     ...options,
     method: "POST",
     headers: { "Content-Type": "application/json", ...options?.headers },
@@ -985,6 +988,93 @@ export function useGetAssessment<
 }
 
 /**
+ * @summary Delete an assessment
+ */
+export const getDeleteAssessmentUrl = (assessmentId: string) => {
+  return `/api/assessments/${assessmentId}`;
+};
+
+export const deleteAssessment = async (
+  assessmentId: string,
+  options?: RequestInit,
+): Promise<DeleteAssessment200> => {
+  return customFetch<DeleteAssessment200>(
+    getDeleteAssessmentUrl(assessmentId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteAssessmentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAssessment>>,
+    TError,
+    { assessmentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAssessment>>,
+  TError,
+  { assessmentId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteAssessment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAssessment>>,
+    { assessmentId: string }
+  > = (props) => {
+    const { assessmentId } = props ?? {};
+
+    return deleteAssessment(assessmentId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAssessmentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAssessment>>
+>;
+
+export type DeleteAssessmentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete an assessment
+ */
+export const useDeleteAssessment = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAssessment>>,
+    TError,
+    { assessmentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAssessment>>,
+  TError,
+  { assessmentId: string },
+  TContext
+> => {
+  return useMutation(getDeleteAssessmentMutationOptions(options));
+};
+
+/**
  * @summary List questions for an assessment
  */
 export const getListAssessmentQuestionsUrl = (assessmentId: string) => {
@@ -1430,6 +1520,93 @@ export function useGetResult<
 }
 
 /**
+ * @summary Generate AI insights for a specific result
+ */
+export const getGenerateResultInsightsUrl = (resultId: string) => {
+  return `/api/results/${resultId}/insights`;
+};
+
+export const generateResultInsights = async (
+  resultId: string,
+  options?: RequestInit,
+): Promise<ResultInsightsResponse> => {
+  return customFetch<ResultInsightsResponse>(
+    getGenerateResultInsightsUrl(resultId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getGenerateResultInsightsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateResultInsights>>,
+    TError,
+    { resultId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateResultInsights>>,
+  TError,
+  { resultId: string },
+  TContext
+> => {
+  const mutationKey = ["generateResultInsights"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateResultInsights>>,
+    { resultId: string }
+  > = (props) => {
+    const { resultId } = props ?? {};
+
+    return generateResultInsights(resultId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateResultInsightsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateResultInsights>>
+>;
+
+export type GenerateResultInsightsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Generate AI insights for a specific result
+ */
+export const useGenerateResultInsights = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateResultInsights>>,
+    TError,
+    { resultId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateResultInsights>>,
+  TError,
+  { resultId: string },
+  TContext
+> => {
+  return useMutation(getGenerateResultInsightsMutationOptions(options));
+};
+
+/**
  * @summary Upload syllabus PDF and generate questions with AI
  */
 export const getUploadSyllabusUrl = () => {
@@ -1861,4 +2038,175 @@ export const useCreateClass = <
   TContext
 > => {
   return useMutation(getCreateClassMutationOptions(options));
+};
+
+/**
+ * @summary Update class details
+ */
+export const getUpdateClassUrl = (classId: string) => {
+  return `/api/classes/${classId}`;
+};
+
+export const updateClass = async (
+  classId: string,
+  updateClassRequest: UpdateClassRequest,
+  options?: RequestInit,
+): Promise<Class> => {
+  return customFetch<Class>(getUpdateClassUrl(classId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateClassRequest),
+  });
+};
+
+export const getUpdateClassMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateClass>>,
+    TError,
+    { classId: string; data: BodyType<UpdateClassRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateClass>>,
+  TError,
+  { classId: string; data: BodyType<UpdateClassRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateClass"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateClass>>,
+    { classId: string; data: BodyType<UpdateClassRequest> }
+  > = (props) => {
+    const { classId, data } = props ?? {};
+
+    return updateClass(classId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateClassMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateClass>>
+>;
+export type UpdateClassMutationBody = BodyType<UpdateClassRequest>;
+export type UpdateClassMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update class details
+ */
+export const useUpdateClass = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateClass>>,
+    TError,
+    { classId: string; data: BodyType<UpdateClassRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateClass>>,
+  TError,
+  { classId: string; data: BodyType<UpdateClassRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateClassMutationOptions(options));
+};
+
+/**
+ * @summary Delete a class
+ */
+export const getDeleteClassUrl = (classId: string) => {
+  return `/api/classes/${classId}`;
+};
+
+export const deleteClass = async (
+  classId: string,
+  options?: RequestInit,
+): Promise<SuccessResponse> => {
+  return customFetch<SuccessResponse>(getDeleteClassUrl(classId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteClassMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteClass>>,
+    TError,
+    { classId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteClass>>,
+  TError,
+  { classId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteClass"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteClass>>,
+    { classId: string }
+  > = (props) => {
+    const { classId } = props ?? {};
+
+    return deleteClass(classId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteClassMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteClass>>
+>;
+
+export type DeleteClassMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a class
+ */
+export const useDeleteClass = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteClass>>,
+    TError,
+    { classId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteClass>>,
+  TError,
+  { classId: string },
+  TContext
+> => {
+  return useMutation(getDeleteClassMutationOptions(options));
 };

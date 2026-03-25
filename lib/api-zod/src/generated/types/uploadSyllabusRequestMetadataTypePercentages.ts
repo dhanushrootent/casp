@@ -5,9 +5,7 @@
  * CAASPP & ELPAC Assessment Platform API
  * OpenAPI spec version: 0.1.0
  */
-import type { User } from "./user";
 
-export interface LoginResponse {
-  user: User;
-  token: string;
-}
+export type UploadSyllabusRequestMetadataTypePercentages = {
+  [key: string]: number;
+};

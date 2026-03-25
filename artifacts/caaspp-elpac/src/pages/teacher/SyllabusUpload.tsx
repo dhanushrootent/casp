@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Badge } from '@/components/ui';
-import { Upload, FileText, Sparkles, CheckCircle2, Loader2, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, FileText, Sparkles, CheckCircle2, Loader2, ArrowRight, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 // Assume the API is working, we'll mock the hook for the POC UI flow if needed, 
@@ -42,7 +42,32 @@ export default function SyllabusUpload() {
   const [isSaving, setIsSaving] = useState(false);
   const [generatedQuestions, setGeneratedQuestions] = useState<any[] | null>(null);
   const [assessmentTitle, setAssessmentTitle] = useState('');
+  const [manualAssessmentTitle, setManualAssessmentTitle] = useState('');
   const [assessmentSummary, setAssessmentSummary] = useState('');
+  const [typePercentages, setTypePercentages] = useState<Record<string, number>>({});
+  
+  const CAASPP_TYPES = [
+    'multiple_choice_single', 'multiple_choice_multiple', 'highlight_selection', 'matching_classification',
+    'short_answer', 'numeric_response', 'equation_input', 'table_completion',
+    'drag_drop_ordering', 'graph_plotting', 'interactive_table', 'select_text', 'multi_step_problem',
+    'performance_task', 'argumentative_essay', 'explanatory_essay', 'narrative_writing', 'evidence_based_writing',
+    'data_analysis', 'simulation_reasoning'
+  ];
+
+  const ELPAC_TYPES = [
+    'listening_mcq', 'listening_image', 'listening_sequence',
+    'read_aloud', 'describe_picture', 'answer_verbal', 'explain_opinion',
+    'reading_mcq', 'vocabulary_context', 'matching_meaning',
+    'sentence_construction', 'short_response', 'paragraph_writing', 'integrated_task'
+  ];
+  
+  const currentTypes = assessmentType === 'CAASPP' ? CAASPP_TYPES : ELPAC_TYPES;
+  const currentTotalPercent = Object.keys(typePercentages)
+     .filter(t => currentTypes.includes(t))
+     .reduce((sum, t) => sum + (typePercentages[t] || 0), 0);
+  
+  const availableTypesToAdd = currentTypes.filter(t => typeof typePercentages[t] === 'undefined');
+
   
   const [listeningRubric, setListeningRubric] = useState('');
   const [readingRubric, setReadingRubric] = useState('');
@@ -99,12 +124,20 @@ export default function SyllabusUpload() {
         ...(listeningRubric ? { listeningRubric } : {}),
         ...(readingRubric ? { readingRubric } : {}),
         ...(writingRubric ? { writingRubric } : {}),
-        ...(selectedClassId ? { classId: selectedClassId } : {})
+        ...(selectedClassId ? { classId: selectedClassId } : {}),
+        metadata: {
+          assessmentTitle: manualAssessmentTitle || undefined, // Pass manual title if provided
+          typePercentages: currentTypes.reduce((acc, t) => {
+             if (typePercentages[t] > 0) acc[t] = typePercentages[t];
+             return acc;
+          }, {} as Record<string, number>)
+        }
       }
     }, {
       onSuccess: (data) => {
         setGeneratedQuestions(data.questions);
         setAssessmentTitle(data.assessmentTitle || `${grade} Grade ${subject} Assessment`);
+        setManualAssessmentTitle(''); // Clear manual title after successful generation
         setAssessmentSummary(data.summary || `Generated from ${file.name}`);
       },
       onError: (err) => {
@@ -284,6 +317,15 @@ export default function SyllabusUpload() {
                       {[3,4,5,6,7,8,11].map(g => <option key={g} value={g}>Grade {g}</option>)}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Assessment Title (Optional)</label>
+                    <Input 
+                      className="w-full h-11 rounded-xl"
+                      placeholder="e.g. Q3 Biology Midterm"
+                      value={manualAssessmentTitle}
+                      onChange={e => setManualAssessmentTitle(e.target.value)}
+                    />
+                  </div>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
@@ -340,6 +382,73 @@ export default function SyllabusUpload() {
                       animate={{ opacity: 1, height: 'auto' }}
                       className="space-y-4 mt-4"
                     >
+                      <div className="bg-primary/5 p-4 rounded-xl border border-primary/10">
+                        <label className="block text-sm font-bold mb-3 flex items-center justify-between">
+                          <span>Question Type Distribution</span>
+                          <span className={`px-2 py-1 rounded text-xs text-white ${currentTotalPercent === 100 || currentTotalPercent === 0 ? 'bg-emerald-500' : 'bg-red-500'}`}>
+                             Total: {currentTotalPercent}%
+                          </span>
+                        </label>
+                        
+                        <div className="space-y-2 mb-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                           {Object.keys(typePercentages).map(type => {
+                              if (!currentTypes.includes(type)) return null;
+                              return (
+                                 <div key={type} className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-border shadow-sm">
+                                    <button 
+                                       type="button" 
+                                       onClick={() => {
+                                          const pt = {...typePercentages};
+                                          delete pt[type];
+                                          setTypePercentages(pt);
+                                       }} 
+                                       className="text-red-400 hover:text-red-600 transition-colors bg-red-50 p-1 rounded"
+                                    >
+                                       <X className="w-4 h-4" />
+                                    </button>
+                                    <span className="text-xs font-semibold uppercase opacity-80 flex-1 truncate" title={type.replace(/_/g, ' ')}>
+                                       {type.replace(/_/g, ' ')}
+                                    </span>
+                                    <div className="flex items-center gap-1 w-20 shrink-0">
+                                      <input 
+                                        type="number" min="0" max="100" 
+                                        className="w-full h-8 text-center text-sm font-bold border-b border-border focus:border-primary outline-none"
+                                        value={typePercentages[type] || ''}
+                                        placeholder="0"
+                                        onChange={e => setTypePercentages(prev => ({ ...prev, [type]: parseInt(e.target.value) || 0 }))}
+                                      />
+                                      <span className="text-xs font-bold text-muted-foreground">%</span>
+                                    </div>
+                                 </div>
+                              );
+                           })}
+                        </div>
+                        
+                        {availableTypesToAdd.length > 0 && (
+                          <div className="relative">
+                            <select 
+                               className="w-full h-10 border border-dashed border-primary/40 rounded-lg text-sm px-3 pr-8 outline-none text-primary font-medium bg-primary/5 hover:bg-primary/10 appearance-none transition-colors cursor-pointer"
+                               value=""
+                               onChange={e => {
+                                  if (e.target.value) {
+                                     setTypePercentages(prev => ({ ...prev, [e.target.value]: 0 }));
+                                  }
+                               }}
+                            >
+                               <option value="" disabled>+ Add Question Type</option>
+                               {availableTypesToAdd.map(t => (
+                                  <option key={t} value={t} className="text-foreground">{t.replace(/_/g, ' ').toUpperCase()}</option>
+                               ))}
+                            </select>
+                            <ChevronDown className="w-4 h-4 text-primary absolute right-3 top-3 pointer-events-none" />
+                          </div>
+                        )}
+
+                        {currentTotalPercent > 0 && currentTotalPercent !== 100 && (
+                          <p className="text-red-500 text-xs font-bold mt-2">Adjust percentages to exactly 100%, or remove selections entirely to let AI autonomously define types.</p>
+                        )}
+                      </div>
+
                       <div>
                         <label className="block text-sm font-medium mb-1">Reading Rubric / Standard</label>
                         <textarea 
@@ -370,7 +479,7 @@ export default function SyllabusUpload() {
 
                 <Button 
                   className="w-full h-12 text-lg mt-4 group" 
-                  disabled={!file || isExtracting || uploadMutation.isPending}
+                  disabled={!file || isExtracting || uploadMutation.isPending || (currentTotalPercent > 0 && currentTotalPercent !== 100)}
                   onClick={handleGenerate}
                 >
                   {isExtracting ? (
@@ -462,10 +571,10 @@ export default function SyllabusUpload() {
                         </div>
                       )}
 
-                      {(q.type === 'short_answer' || q.type === 'essay' || q.type === 'speaking') ? (
+                      {(!q.options || q.options.length === 0) ? (
                         <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 italic text-sm text-blue-700">
                            <Sparkles className="w-4 h-4 inline mr-2" /> 
-                           This is a {q.type} question. No fixed options required.
+                           This is a {q.type.replace(/_/g, ' ')} question. No fixed options required.
                         </div>
                       ) : null}
                     </CardContent>

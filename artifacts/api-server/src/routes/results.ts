@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { resultsTable, assessmentsTable, questionsTable, usersTable } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { ai } from "@workspace/integrations-gemini-ai";
 
 const router: IRouter = Router();
 
@@ -217,6 +218,64 @@ router.get("/results/:resultId", async (req: Request, res: Response) => {
     feedback: result.feedback,
     answers: answerDetails,
   });
+});
+
+router.post("/results/:resultId/insights", async (req: Request, res: Response) => {
+  const { resultId } = req.params;
+  const results = await db.select().from(resultsTable).where(eq(resultsTable.id, resultId as string)).limit(1);
+  const result = results[0];
+
+  if (!result) {
+    return res.status(404).json({ error: "not_found", message: "Result not found" });
+  }
+
+  const assessments = await db.select().from(assessmentsTable).where(eq(assessmentsTable.id, result.assessmentId)).limit(1);
+  const assessment = assessments[0];
+  const questions = await db.select().from(questionsTable).where(eq(questionsTable.assessmentId, result.assessmentId));
+  const students = await db.select().from(usersTable).where(eq(usersTable.id, result.studentId)).limit(1);
+  
+  if (!assessment || !students[0]) {
+      return res.status(404).json({ error: "not_found", message: "Assessment or student not found" });
+  }
+
+  const questionMap = Object.fromEntries(questions.map(q => [q.id, q]));
+  const answerDetails = (result.answers as { questionId: string; answer: string }[]).map(a => {
+    const q = questionMap[a.questionId];
+    if (!q) return null;
+    return {
+      questionText: q.text,
+      studentAnswer: a.answer,
+      correctAnswer: q.correctAnswer,
+      skill: q.skill
+    };
+  }).filter(Boolean);
+
+  const prompt = `You are an expert AI teaching assistant. Analyze the following student assessment result and provide concise, personalized insights and feedback for the student to improve. Focus on their strengths and the specific concepts they got wrong. DO NOT be overly verbose. Return ONLY the feedback text.
+Assessment: ${assessment.title}
+Student: ${students[0].name}
+Score: ${result.percentage}% (${result.passed ? "Passed" : "Failed"})
+
+Question/Answer Data:
+${JSON.stringify(answerDetails, null, 2)}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: { maxOutputTokens: 2000 },
+    });
+
+    const aiFeedback = response.text || "Could not generate insights.";
+
+    await db.update(resultsTable)
+      .set({ feedback: aiFeedback })
+      .where(eq(resultsTable.id, resultId as string));
+
+    return res.json({ feedback: aiFeedback });
+  } catch (error) {
+    console.error("Failed to generate AI insights:", error);
+    return res.status(500).json({ error: "ai_error", message: "Failed to generate AI insights" });
+  }
 });
 
 export default router;

@@ -3,10 +3,11 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, Button, Input } from '@/components/ui';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { useListClasses, useCreateClass, useListUsers, useUpdateUser, getListClassesQueryKey, getListUsersQueryKey } from '@workspace/api-client-react';
+import { useListClasses, useCreateClass, useListUsers, useUpdateUser, useUpdateClass, useDeleteClass, getListClassesQueryKey, getListUsersQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
-import { GraduationCap, Users, BookOpen, Loader2, Plus, CheckSquare } from 'lucide-react';
+import { GraduationCap, Users, BookOpen, Loader2, Plus, CheckSquare, Edit, Trash2, MoreVertical } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 function AssignStudentsDialog({ cls }: { cls: any }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -104,6 +105,90 @@ function AssignStudentsDialog({ cls }: { cls: any }) {
   );
 }
 
+function EditClassDialog({ cls, teachers }: { cls: any; teachers: any[] }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    name: cls.name,
+    grade: String(cls.grade),
+    section: cls.section || '',
+    teacherId: cls.teacherId
+  });
+
+  const updateClassMutation = useUpdateClass();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await updateClassMutation.mutateAsync({ classId: cls.id, data: formData });
+      toast({ title: 'Class updated successfully!' });
+      setIsOpen(false);
+      queryClient.invalidateQueries({ queryKey: getListClassesQueryKey() });
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Error updating class', description: String(error) });
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+      <DialogTrigger asChild>
+        <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+          <Edit className="w-4 h-4 mr-2" /> Edit Class
+        </DropdownMenuItem>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit Class: {cls.name}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleUpdate} className="space-y-4 pt-4">
+          <div className="space-y-2">
+            <Label htmlFor="edit-name">Class Name</Label>
+            <Input id="edit-name" required value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-grade">Grade Level</Label>
+              <select
+                id="edit-grade"
+                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none"
+                required
+                value={formData.grade}
+                onChange={e => setFormData({ ...formData, grade: e.target.value })}
+              >
+                {[3,4,5,6,7,8,11].map(g => (
+                  <option key={g} value={String(g)}>Grade {g}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-section">Section (Optional)</Label>
+              <Input id="edit-section" value={formData.section} onChange={e => setFormData({ ...formData, section: e.target.value })} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-teacher">Change Teacher</Label>
+            <select
+              id="edit-teacher"
+              className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none"
+              required
+              value={formData.teacherId}
+              onChange={e => setFormData({ ...formData, teacherId: e.target.value })}
+            >
+              {teachers.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+          <Button type="submit" className="w-full" disabled={updateClassMutation.isPending}>
+            {updateClassMutation.isPending ? 'Saving...' : 'Save Changes'}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function AdminClasses() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -117,6 +202,7 @@ export default function AdminClasses() {
   // Fetch teachers for the assign teacher dropdown
   const { data: teachers, isLoading: isLoadingTeachers } = useListUsers({ role: 'teacher' });
   const createClassMutation = useCreateClass();
+  const deleteClassMutation = useDeleteClass();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -259,9 +345,37 @@ export default function AdminClasses() {
                       <h3 className="font-bold text-foreground truncate">{cls.name}</h3>
                       <p className="text-sm text-muted-foreground">Grade {cls.grade}{(cls as any).section ? ` • Section ${(cls as any).section}` : ''}</p>
                     </div>
-                    <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-700">
-                      Active
-                    </span>
+                    <div className="flex items-center gap-1">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <EditClassDialog cls={cls} teachers={teachers || []} />
+                          <DropdownMenuItem 
+                            className="text-destructive focus:text-destructive"
+                            onSelect={async () => {
+                              if (confirm(`Are you sure you want to delete ${cls.name}? This will remove it from all students.`)) {
+                                try {
+                                  await deleteClassMutation.mutateAsync({ classId: cls.id });
+                                  toast({ title: 'Class deleted successfully' });
+                                  queryClient.invalidateQueries({ queryKey: getListClassesQueryKey() });
+                                } catch (e) {
+                                  toast({ variant: 'destructive', title: 'Delete failed', description: String(e) });
+                                }
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" /> Delete Class
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-700">
+                        Active
+                      </span>
+                    </div>
                   </div>
 
                   <div className="space-y-3 text-sm">

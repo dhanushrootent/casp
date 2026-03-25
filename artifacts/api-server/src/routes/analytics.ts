@@ -212,8 +212,10 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
       });
 
       return {
+        resultId: r.id,
         testTitle: assessmentMap[r.assessmentId]?.title,
         score: r.percentage,
+        feedback: r.feedback,
         answeredQuestions
       };
     });
@@ -232,7 +234,7 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
 
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       mentorInsights = response.text || "Insight generation failed.";

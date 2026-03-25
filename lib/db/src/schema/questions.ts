@@ -6,7 +6,7 @@ export const questionsTable = pgTable("questions", {
   id: text("id").primaryKey(),
   assessmentId: text("assessment_id").notNull(),
   text: text("text").notNull(),
-  type: text("type").notNull().$type<"multiple_choice" | "short_answer" | "essay" | "listening" | "speaking">(),
+  type: text("type").notNull().$type<string>(),
   options: jsonb("options").$type<string[]>(),
   correctAnswer: text("correct_answer"),
   explanation: text("explanation"),

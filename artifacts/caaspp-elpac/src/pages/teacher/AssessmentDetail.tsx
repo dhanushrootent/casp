@@ -149,7 +149,7 @@ export default function AssessmentDetail() {
                     <AudioPlayer text={q.audioScript || q.text} className="shrink-0" />
                   </div>
                   
-                  {q.type === 'multiple_choice' && q.options && q.options.length > 0 && (
+                  {q.options && q.options.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {q.options.map((opt: string, oi: number) => {
                         const isCorrect = q.correctAnswer === opt;
@@ -179,7 +179,7 @@ export default function AssessmentDetail() {
                     </div>
                   )}
 
-                  {q.type !== 'multiple_choice' && q.correctAnswer && (
+                  {(!q.options || q.options.length === 0) && q.correctAnswer && (
                     <div className="mt-4 p-4 bg-emerald-50 rounded-xl border border-emerald-100">
                       <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2 block">Correct Answer / Rubric</span>
                       <p className="text-sm text-emerald-900 font-medium">{q.correctAnswer}</p>

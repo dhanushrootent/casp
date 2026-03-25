@@ -7,6 +7,7 @@
  */
 import type { UploadSyllabusRequestAssessmentType } from "./uploadSyllabusRequestAssessmentType";
 import type { UploadSyllabusRequestDifficulty } from "./uploadSyllabusRequestDifficulty";
+import type { UploadSyllabusRequestMetadata } from "./uploadSyllabusRequestMetadata";
 
 export interface UploadSyllabusRequest {
   /** Extracted text content from the PDF syllabus */
@@ -25,6 +26,8 @@ export interface UploadSyllabusRequest {
   listeningRubric?: string;
   /** Optional custom rubric for reading questions */
   readingRubric?: string;
+  /** Additional frontend-provided metadata */
+  metadata?: UploadSyllabusRequestMetadata;
   /** Optional custom rubric for writing questions */
   writingRubric?: string;
 }
