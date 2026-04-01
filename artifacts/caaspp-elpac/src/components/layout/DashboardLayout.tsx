@@ -52,7 +52,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
   return (
-    <div className="min-h-screen bg-gray-50/50 flex">
+    <div className="min-h-screen bg-gray-50/50">
       {/* Mobile Sidebar Overlay */}
       {isMobileMenuOpen && (
         <div 
@@ -63,7 +63,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-border shadow-xl shadow-black/5 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:w-72 lg:shadow-none flex flex-col",
+        "fixed inset-y-0 left-0 z-50 flex h-screen w-72 flex-col bg-white border-r border-border shadow-xl shadow-black/5 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:shadow-none",
         isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="h-20 flex items-center px-6 border-b border-border">
@@ -106,7 +106,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           })}
         </div>
 
-        <div className="p-4 border-t border-border">
+        <div className="mt-auto border-t border-border p-4">
           <div className="p-4 rounded-xl bg-gray-50 border border-gray-100 mb-4">
             <div className="font-semibold text-sm text-foreground">{user.name}</div>
             <div className="text-xs text-muted-foreground capitalize">{user.role}</div>
@@ -119,7 +119,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="flex min-h-screen min-w-0 flex-1 flex-col lg:ml-72">
         <header className="h-20 bg-white/80 backdrop-blur-md border-b border-border sticky top-0 z-30 flex items-center justify-between px-4 sm:px-8">
           <button onClick={toggleMobileMenu} className="lg:hidden p-2 -ml-2 text-muted-foreground hover:text-foreground">
             <Menu className="w-6 h-6" />
