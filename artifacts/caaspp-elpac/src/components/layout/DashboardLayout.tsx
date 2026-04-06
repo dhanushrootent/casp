@@ -12,7 +12,8 @@ import {
   FileText,
   Users,
   BarChart3,
-  CheckCircle
+  CheckCircle,
+  PenLine
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '../ui';
@@ -36,6 +37,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     teacher: [
       { name: 'Overview', path: '/teacher/dashboard', icon: LayoutDashboard },
       { name: 'Syllabus AI', path: '/teacher/syllabus-upload', icon: FileText },
+      { name: 'Writing Generator', path: '/teacher/writing-generator', icon: PenLine },
       { name: 'Assessments', path: '/teacher/assessments', icon: BookOpen },
       { name: 'My Students', path: '/teacher/students', icon: Users },
     ],
@@ -73,7 +75,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             </div>
             <div>
               <h1 className="font-display font-bold text-xl text-primary leading-tight">CAASPP<span className="text-accent">&</span>ELPAC</h1>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Assessment Platform</p>
+              <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Assessment Platform</p>
             </div>
           </div>
           <button onClick={closeMobileMenu} className="ml-auto lg:hidden text-muted-foreground hover:text-foreground">

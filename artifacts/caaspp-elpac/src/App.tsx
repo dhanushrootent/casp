@@ -13,6 +13,7 @@ import TeacherAssessments from "@/pages/teacher/Assessments";
 import AssessmentDetail from "@/pages/teacher/AssessmentDetail";
 import TeacherStudents from "@/pages/teacher/Students";
 import SyllabusUpload from "@/pages/teacher/SyllabusUpload";
+import WritingGenerator from "@/pages/teacher/WritingGenerator";
 import AdminDashboard from "@/pages/admin/Dashboard";
 import AdminUsers from "@/pages/admin/Users";
 import AdminClasses from "@/pages/admin/Classes";
@@ -82,6 +83,9 @@ function Router() {
       </Route>
       <Route path="/teacher/syllabus-upload">
         {() => <ProtectedRoute component={SyllabusUpload} allowedRoles={['teacher']} />}
+      </Route>
+      <Route path="/teacher/writing-generator">
+        {() => <ProtectedRoute component={WritingGenerator} allowedRoles={['teacher']} />}
       </Route>
 
       {/* Admin Routes */}

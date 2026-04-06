@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { useRoute, Link } from 'wouter';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from '@/components/ui';
-import { useGetAssessment, getGetAssessmentQueryKey, useListClasses } from '@workspace/api-client-react';
-import { BookOpen, Clock, ArrowLeft, Loader2, Target, Users, CheckCircle2 } from 'lucide-react';
+import { useGetAssessment, getGetAssessmentQueryKey, useListClasses, useGradeWritingResponse } from '@workspace/api-client-react';
+import { BookOpen, Clock, ArrowLeft, Loader2, Target, Users, CheckCircle2, Sparkles } from 'lucide-react';
 import { AudioPlayer } from '@/components/ui/audio-player';
+import { WritingRubricGradeView } from '@/components/teacher/WritingRubricGradeView';
 
 const difficultyColor: Record<string, string> = {
   easy: 'bg-emerald-100 text-emerald-700',
@@ -21,6 +22,85 @@ const typeColor: Record<string, string> = {
 export default function AssessmentDetail() {
   const [, params] = useRoute('/teacher/assessments/:id');
   const id = params?.id;
+
+  const gradeWritingMutation = useGradeWritingResponse();
+  const [writingGradeByQuestionId, setWritingGradeByQuestionId] = useState<Record<string, {
+    studentName: string;
+    studentResponse: string;
+    result: any | null;
+  }>>({});
+  const [editedRubricByQuestionId, setEditedRubricByQuestionId] = useState<Record<string, any>>({});
+
+  const getWritingState = (questionId: string) => {
+    return writingGradeByQuestionId[questionId] ?? { studentName: '', studentResponse: '', result: null };
+  };
+
+  const setWritingState = (questionId: string, patch: Partial<{ studentName: string; studentResponse: string; result: any | null }>) => {
+    setWritingGradeByQuestionId(prev => ({
+      ...prev,
+      [questionId]: { ...getWritingState(questionId), ...patch }
+    }));
+  };
+
+  const getEditableRubric = (questionId: string, payload: any) => {
+    return editedRubricByQuestionId[questionId] ?? payload.rubric;
+  };
+
+  const setEditableRubric = (questionId: string, rubric: any) => {
+    setEditedRubricByQuestionId(prev => ({ ...prev, [questionId]: rubric }));
+  };
+
+  const normalizeWeightsTo100 = (criteria: any[]) => {
+    if (!criteria?.length) return [];
+    const raw = criteria.map((c) => (Number.isFinite(c.weight) ? Number(c.weight) : 0));
+    const sum = raw.reduce((a, b) => a + b, 0);
+    if (sum <= 0) {
+      const even = Math.floor(100 / criteria.length);
+      const remainder = 100 - even * criteria.length;
+      return criteria.map((c, i) => ({ ...c, weight: even + (i === 0 ? remainder : 0) }));
+    }
+    const scaled = raw.map((w) => (w / sum) * 100);
+    const rounded = scaled.map((w) => Math.round(w));
+    const roundedSum = rounded.reduce((a, b) => a + b, 0);
+    const delta = 100 - roundedSum;
+    const maxIdx = rounded.reduce((best, _, i) => (rounded[i] > rounded[best] ? i : best), 0);
+    return criteria.map((c, i) => ({ ...c, weight: i === maxIdx ? rounded[i] + delta : rounded[i] }));
+  };
+
+  const calcWeightSum = (criteria: any[]) =>
+    (criteria || []).reduce((sum, c) => sum + (Number.isFinite(c?.weight) ? Number(c.weight) : 0), 0);
+
+  const applyPointsFromWeights = (rubric: any) => {
+    if (!rubric?.criteria?.length) return rubric;
+    const totalPoints = Number.isFinite(rubric.totalPoints) ? Number(rubric.totalPoints) : 20;
+    const weights = rubric.criteria.map((c: any) => (Number.isFinite(c.weight) ? Number(c.weight) : 0));
+    const sum = weights.reduce((a: number, b: number) => a + b, 0) || 100;
+    const raw = weights.map((w: number) => (w / sum) * totalPoints);
+    const rounded = raw.map((p: number) => Math.max(0, Math.round(p)));
+    const roundedSum = rounded.reduce((a: number, b: number) => a + b, 0);
+    const delta = totalPoints - roundedSum;
+    const maxIdx = weights.reduce((best: number, _: number, i: number) => (weights[i] > weights[best] ? i : best), 0);
+    const fixed = rounded.map((p: number, i: number) => (i === maxIdx ? p + delta : p));
+    return {
+      ...rubric,
+      totalPoints,
+      criteria: rubric.criteria.map((c: any, i: number) => ({ ...c, points: fixed[i] })),
+    };
+  };
+
+  const parseWritingPayload = useMemo(() => {
+    return (maybeJson: unknown) => {
+      if (typeof maybeJson !== 'string' || maybeJson.trim().length === 0) return null;
+      try {
+        const parsed = JSON.parse(maybeJson);
+        if (!parsed || typeof parsed !== 'object') return null;
+        if ((parsed as any).kind !== 'writing_activity_v1') return null;
+        return parsed as any;
+      } catch {
+        return null;
+      }
+    };
+  }, []);
   
   const { data: assessment, isLoading, error } = useGetAssessment(id as string, {
     query: { 
@@ -192,6 +272,237 @@ export default function AssessmentDetail() {
                       <p className="text-sm text-blue-900/80">{q.explanation}</p>
                     </div>
                   )}
+
+                  {(() => {
+                    const payload = parseWritingPayload(q.explanation);
+                    if (!payload) return null;
+                    const st = getWritingState(q.id);
+                    const rubric = getEditableRubric(q.id, payload);
+                    const weightSum = Math.round(calcWeightSum(rubric?.criteria || []));
+                    return (
+                      <div className="mt-6 p-4 rounded-xl border border-primary/15 bg-primary/5 space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="w-5 h-5 text-accent" />
+                            <span className="font-semibold">Grade Student Response</span>
+                          </div>
+                          <Badge variant="outline" className="bg-white/60">Writing Activity</Badge>
+                        </div>
+
+                        <div className="rounded-xl border border-border bg-white p-4 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-semibold">Editable Rubric</div>
+                            <div className={`text-xs font-semibold ${weightSum === 100 ? 'text-emerald-700' : 'text-red-600'}`}>
+                              Weight total: {weightSum}%
+                            </div>
+                          </div>
+                          <div className="flex justify-end">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const normalized = normalizeWeightsTo100(rubric.criteria || []);
+                                setEditableRubric(q.id, applyPointsFromWeights({ ...rubric, criteria: normalized }));
+                              }}
+                            >
+                              Rebalance Weights
+                            </Button>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-[900px] w-full border-collapse">
+                              <thead>
+                                <tr className="text-xs uppercase text-muted-foreground">
+                                  <th className="text-left p-2 border-b">Criterion</th>
+                                  <th className="text-left p-2 border-b w-24">Points</th>
+                                  <th className="text-left p-2 border-b w-28">Weight %</th>
+                                  <th className="text-left p-2 border-b">Exemplary</th>
+                                  <th className="text-left p-2 border-b">Proficient</th>
+                                  <th className="text-left p-2 border-b">Developing</th>
+                                  <th className="text-left p-2 border-b">Beginning</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(rubric?.criteria || []).map((c: any, idx: number) => {
+                                  const levels = c.levels || [];
+                                  const getLevel = (label: string) => levels.find((l: any) => l.label === label) || null;
+                                  const exemplary = getLevel("Exemplary");
+                                  const proficient = getLevel("Proficient");
+                                  const developing = getLevel("Developing");
+                                  const beginning = getLevel("Beginning");
+
+                                  const setLevelDesc = (label: string, desc: string) => {
+                                    const nextCriteria = [...(rubric.criteria || [])];
+                                    const nextLevels = [...(nextCriteria[idx].levels || [])];
+                                    const levelIdx = nextLevels.findIndex((l: any) => l.label === label);
+                                    if (levelIdx >= 0) nextLevels[levelIdx] = { ...nextLevels[levelIdx], description: desc };
+                                    nextCriteria[idx] = { ...nextCriteria[idx], levels: nextLevels };
+                                    setEditableRubric(q.id, { ...rubric, criteria: nextCriteria });
+                                  };
+
+                                  return (
+                                    <tr key={c.id ?? idx} className="align-top">
+                                      <td className="p-2 border-b">
+                                        <div className="font-semibold">{c.name}</div>
+                                        <div className="text-xs text-muted-foreground">{c.description}</div>
+                                      </td>
+                                      <td className="p-2 border-b font-semibold">{c.points}</td>
+                                      <td className="p-2 border-b">
+                                        <input
+                                          className="w-24 h-9 rounded-xl border border-input bg-background px-2 text-sm focus:ring-2 focus:ring-primary outline-none"
+                                          type="number"
+                                          value={c.weight}
+                                          onChange={(e) => {
+                                            const nextCriteria = [...(rubric.criteria || [])];
+                                            nextCriteria[idx] = { ...nextCriteria[idx], weight: Number(e.target.value) || 0 };
+                                            setEditableRubric(q.id, applyPointsFromWeights({ ...rubric, criteria: nextCriteria }));
+                                          }}
+                                        />
+                                      </td>
+                                      <td className="p-2 border-b">
+                                        <textarea
+                                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
+                                          value={exemplary?.description || ""}
+                                          onChange={(e) => setLevelDesc("Exemplary", e.target.value)}
+                                        />
+                                      </td>
+                                      <td className="p-2 border-b">
+                                        <textarea
+                                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
+                                          value={proficient?.description || ""}
+                                          onChange={(e) => setLevelDesc("Proficient", e.target.value)}
+                                        />
+                                      </td>
+                                      <td className="p-2 border-b">
+                                        <textarea
+                                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
+                                          value={developing?.description || ""}
+                                          onChange={(e) => setLevelDesc("Developing", e.target.value)}
+                                        />
+                                      </td>
+                                      <td className="p-2 border-b">
+                                        <textarea
+                                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
+                                          value={beginning?.description || ""}
+                                          onChange={(e) => setLevelDesc("Beginning", e.target.value)}
+                                        />
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium mb-2">Student Name (optional)</label>
+                            <input
+                              className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
+                              value={st.studentName}
+                              onChange={(e) => setWritingState(q.id, { studentName: e.target.value })}
+                              placeholder="e.g. Maya"
+                            />
+                          </div>
+                          <div className="flex items-end">
+                            <Button
+                              className="w-full h-11"
+                              disabled={gradeWritingMutation.isPending || st.studentResponse.trim().length < 10}
+                              onClick={async () => {
+                                try {
+                                  setWritingState(q.id, { result: null });
+                                  const result = await gradeWritingMutation.mutateAsync({
+                                    data: {
+                                      studentResponse: st.studentResponse,
+                                      writingPrompt: q.text,
+                                      backgroundInformation: payload.backgroundInformation ?? "",
+                                      rubric,
+                                      rubricParams: payload.rubricParams,
+                                      grade: (assessment as any)?.grade ?? "",
+                                      subject: (assessment as any)?.subject ?? "",
+                                      studentName: st.studentName || undefined,
+                                    },
+                                  });
+                                  setWritingState(q.id, { result });
+                                } catch (error) {
+                                  console.error("Failed to grade writing response:", error);
+                                }
+                              }}
+                            >
+                              {gradeWritingMutation.isPending ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Grading...
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="w-4 h-4 mr-2" /> Grade This Response
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Paste Student Essay Here</label>
+                          <textarea
+                            className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[180px] resize-y"
+                            value={st.studentResponse}
+                            onChange={(e) => setWritingState(q.id, { studentResponse: e.target.value })}
+                          />
+                        </div>
+
+                        {st.result ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl">
+                              <div className="font-semibold">
+                                Score: {st.result.totalScore} / {st.result.maxScore} ({Math.round(st.result.percentage)}%)
+                              </div>
+                              <Badge variant="outline" className="bg-white/70">
+                                {st.result.percentage >= 60 ? "Pass" : "Needs Support"}
+                              </Badge>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="text-sm font-semibold text-foreground">Rubric &amp; criterion performance</div>
+                              <WritingRubricGradeView rubric={rubric} grading={st.result} />
+                              <p className="text-xs text-muted-foreground">
+                                “Met” means at least 70% of points on that row; “Partial” is 40–69%; below that is “Not met”.
+                              </p>
+                            </div>
+
+                            <div className="grid md:grid-cols-2 gap-4">
+                              <div className="p-4 rounded-xl border bg-white">
+                                <div className="text-sm font-semibold mb-2">Requirements</div>
+                                {[
+                                  ["Word Count", st.result.meetsRequirements?.wordCount],
+                                  ["Paragraphs", st.result.meetsRequirements?.paragraphCount],
+                                  ["Citations", st.result.meetsRequirements?.citations],
+                                  ["Thesis", st.result.meetsRequirements?.thesis],
+                                  ["Intro/Conclusion", st.result.meetsRequirements?.introConclusion],
+                                ].map(([label, ok]) => (
+                                  <div key={label as string} className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">{label}</span>
+                                    <span className={ok ? "text-emerald-700 font-semibold" : "text-red-600 font-semibold"}>
+                                      {ok ? "✓" : "✗"}
+                                    </span>
+                                  </div>
+                                ))}
+                                <div className="pt-2 mt-2 border-t text-xs text-muted-foreground">
+                                  Word count: {st.result.wordCount} • Paragraphs: {st.result.paragraphCount} • Citations: {st.result.citationCount}
+                                </div>
+                              </div>
+                              <div className="p-4 rounded-xl border bg-white">
+                                <div className="text-sm font-semibold mb-2">Student-facing feedback</div>
+                                <div className="text-sm text-muted-foreground whitespace-pre-line">
+                                  {st.result.overallFeedback?.studentSummary}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             ))

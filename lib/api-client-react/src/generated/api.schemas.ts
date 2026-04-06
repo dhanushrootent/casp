@@ -330,6 +330,228 @@ export interface GeneratedQuestionsResponse {
   summary: string;
 }
 
+export type WritingGenerateRequestAssessmentType =
+  (typeof WritingGenerateRequestAssessmentType)[keyof typeof WritingGenerateRequestAssessmentType];
+
+export const WritingGenerateRequestAssessmentType = {
+  CAASPP: "CAASPP",
+  ELPAC: "ELPAC",
+} as const;
+
+export type WritingGenerateRequestDifficulty =
+  (typeof WritingGenerateRequestDifficulty)[keyof typeof WritingGenerateRequestDifficulty];
+
+export const WritingGenerateRequestDifficulty = {
+  easy: "easy",
+  medium: "medium",
+  hard: "hard",
+  mixed: "mixed",
+} as const;
+
+export type WritingGenerateRequestMetadata = {
+  assessmentTitle?: string;
+};
+
+export interface WritingRubricParams {
+  minWords: number;
+  maxWords: number;
+  minParagraphs: number;
+  maxParagraphs: number;
+  requireThesis: boolean;
+  requireIntroConclusion: boolean;
+  minCitations: number;
+  maxCitations: number;
+  additionalInstructions?: string;
+}
+
+export interface WritingGenerateRequest {
+  topic: string;
+  grade: string;
+  subject: string;
+  assessmentType: WritingGenerateRequestAssessmentType;
+  difficulty: WritingGenerateRequestDifficulty;
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  promptCount: number;
+  /** argumentative | explanatory | narrative | response | analysis */
+  rubricType: string;
+  genre: string;
+  rubricParams: WritingRubricParams;
+  classId?: string;
+  metadata?: WritingGenerateRequestMetadata;
+}
+
+export type WritingSuggestionRequestDifficulty =
+  (typeof WritingSuggestionRequestDifficulty)[keyof typeof WritingSuggestionRequestDifficulty];
+
+export const WritingSuggestionRequestDifficulty = {
+  easy: "easy",
+  medium: "medium",
+  hard: "hard",
+  mixed: "mixed",
+} as const;
+
+export type WritingSuggestionRequestAssessmentType =
+  (typeof WritingSuggestionRequestAssessmentType)[keyof typeof WritingSuggestionRequestAssessmentType];
+
+export const WritingSuggestionRequestAssessmentType = {
+  CAASPP: "CAASPP",
+  ELPAC: "ELPAC",
+} as const;
+
+export interface WritingSuggestionRequest {
+  grade: string;
+  rubricType: string;
+  difficulty: WritingSuggestionRequestDifficulty;
+  genre: string;
+  subject?: string;
+  assessmentType?: WritingSuggestionRequestAssessmentType;
+}
+
+export interface WritingSuggestionResponse {
+  suggestions: string[];
+}
+
+export type WritingFinalizeRequestAssessmentType =
+  (typeof WritingFinalizeRequestAssessmentType)[keyof typeof WritingFinalizeRequestAssessmentType];
+
+export const WritingFinalizeRequestAssessmentType = {
+  CAASPP: "CAASPP",
+  ELPAC: "ELPAC",
+} as const;
+
+export type WritingFinalizeRequestDifficulty =
+  (typeof WritingFinalizeRequestDifficulty)[keyof typeof WritingFinalizeRequestDifficulty];
+
+export const WritingFinalizeRequestDifficulty = {
+  easy: "easy",
+  medium: "medium",
+  hard: "hard",
+  mixed: "mixed",
+} as const;
+
+export interface WritingFinalizeRequest {
+  topic: string;
+  grade: string;
+  subject?: string;
+  assessmentType?: WritingFinalizeRequestAssessmentType;
+  difficulty: WritingFinalizeRequestDifficulty;
+  rubricType: string;
+  genre: string;
+}
+
+export type WritingSourceType =
+  (typeof WritingSourceType)[keyof typeof WritingSourceType];
+
+export const WritingSourceType = {
+  article: "article",
+  book: "book",
+  website: "website",
+  primary_source: "primary_source",
+  video: "video",
+} as const;
+
+export interface WritingSource {
+  title: string;
+  author?: string;
+  year?: string;
+  description: string;
+  type: WritingSourceType;
+  url?: string;
+}
+
+export interface WritingFinalizeResponse {
+  backgroundInformation: string;
+  sources: WritingSource[];
+}
+
+export interface WritingPrompt {
+  id: string;
+  text: string;
+  type: string;
+  skill: string;
+  difficulty: string;
+}
+
+export interface RubricLevel {
+  score: number;
+  label: string;
+  description: string;
+}
+
+export interface RubricCriterion {
+  id: string;
+  name: string;
+  description: string;
+  weight: number;
+  points: number;
+  levels: RubricLevel[];
+}
+
+export interface WritingRubric {
+  totalPoints: number;
+  criteria: RubricCriterion[];
+}
+
+export interface WritingGenerateResponse {
+  assessmentTitle: string;
+  summary: string;
+  backgroundInformation: string;
+  sources: WritingSource[];
+  writingPrompts: WritingPrompt[];
+  rubric: WritingRubric;
+}
+
+export interface WritingGradeRequest {
+  studentResponse: string;
+  writingPrompt: string;
+  backgroundInformation: string;
+  rubric: WritingRubric;
+  rubricParams: WritingRubricParams;
+  grade: string;
+  subject: string;
+  studentName?: string;
+}
+
+export interface WritingCriteriaScore {
+  criterionId: string;
+  criterionName: string;
+  score: number;
+  maxScore: number;
+  level: string;
+  feedback: string;
+  quotes: string[];
+}
+
+export interface WritingOverallFeedback {
+  strengths: string[];
+  areasForImprovement: string[];
+  teacherNote: string;
+  studentSummary: string;
+}
+
+export interface WritingMeetsRequirements {
+  wordCount: boolean;
+  paragraphCount: boolean;
+  citations: boolean;
+  thesis: boolean;
+  introConclusion: boolean;
+}
+
+export interface WritingGradeResponse {
+  totalScore: number;
+  maxScore: number;
+  percentage: number;
+  criteriaScores: WritingCriteriaScore[];
+  overallFeedback: WritingOverallFeedback;
+  wordCount: number;
+  paragraphCount: number;
+  citationCount: number;
+  meetsRequirements: WritingMeetsRequirements;
+}
+
 export interface SubjectPerformance {
   subject: string;
   averageScore: number;

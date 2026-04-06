@@ -10,6 +10,19 @@ import { useGetAssessment, getGetAssessmentQueryKey, useSubmitResult } from '@wo
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 
+function parseWritingActivityPayload(explanation?: string | null) {
+  if (!explanation) return null;
+  try {
+    const parsed = JSON.parse(explanation);
+    if (parsed && typeof parsed === 'object' && parsed.kind === 'writing_activity_v1') {
+      return parsed as any;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function AssessmentTake() {
   const [, params] = useRoute('/student/assessment/:id');
   const id = params?.id as string;
@@ -49,6 +62,7 @@ export default function AssessmentTake() {
 
   const questions = assessment?.questions || [];
   const currentQ = questions[currentIdx];
+  const writingPayload = parseWritingActivityPayload(currentQ?.explanation);
   const progress = ((currentIdx) / (questions.length || 1)) * 100;
 
   const handleAnswer = (val: string) => {
@@ -180,6 +194,38 @@ export default function AssessmentTake() {
                   />
                 </div>
 
+                {writingPayload ? (
+                  <div className="mb-8 space-y-4">
+                    <div className="p-5 bg-emerald-50/60 rounded-xl border border-emerald-200">
+                      <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2 block">
+                        Background Information
+                      </span>
+                      <p className="text-sm text-emerald-900 whitespace-pre-line">
+                        {writingPayload.backgroundInformation}
+                      </p>
+                    </div>
+
+                    {Array.isArray(writingPayload.sources) && writingPayload.sources.length > 0 ? (
+                      <div className="p-5 bg-blue-50/50 rounded-xl border border-blue-100">
+                        <span className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3 block">
+                          Suggested Sources
+                        </span>
+                        <div className="space-y-3">
+                          {writingPayload.sources.map((source: any, idx: number) => (
+                            <div key={idx} className="rounded-lg bg-white border border-blue-100 p-3">
+                              <div className="font-semibold text-sm text-foreground">{source.title}</div>
+                              <div className="text-xs text-muted-foreground mb-1">
+                                {[source.author, source.year, source.type].filter(Boolean).join(' • ')}
+                              </div>
+                              <div className="text-sm text-gray-700">{source.description}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {currentQ.options && currentQ.options.length > 0 && (
                   <div className="space-y-3">
                     {currentQ.options.map((opt: string, i: number) => {
@@ -247,7 +293,7 @@ export default function AssessmentTake() {
                         <p className="text-sm text-emerald-900 font-medium">{currentQ.correctAnswer}</p>
                       </div>
                     )}
-                    {currentQ.explanation && (
+                    {currentQ.explanation && !writingPayload && (
                       <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
                         <span className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-1 block">Explanation</span>
                         <p className="text-sm text-blue-900/80">{currentQ.explanation}</p>

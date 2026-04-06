@@ -19,6 +19,8 @@ tags:
     description: Results operations
   - name: syllabus
     description: Syllabus upload and AI question generation
+  - name: writing
+    description: Writing activity generation and AI grading
   - name: users
     description: User management
   - name: analytics
@@ -408,6 +410,82 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GeneratedQuestionsResponse"
+
+  /writing/generate:
+    post:
+      operationId: generateWritingActivity
+      tags: [writing]
+      summary: Generate a writing activity (prompts, sources, rubric) with AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WritingGenerateRequest"
+      responses:
+        "200":
+          description: Generated writing activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WritingGenerateResponse"
+
+  /writing/suggestions:
+    post:
+      operationId: suggestWritingTopics
+      tags: [writing]
+      summary: Suggest writing topics based on grade, type, and difficulty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WritingSuggestionRequest"
+      responses:
+        "200":
+          description: Suggested writing topics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WritingSuggestionResponse"
+
+  /writing/finalize:
+    post:
+      operationId: finalizeWritingTopic
+      tags: [writing]
+      summary: Generate student-facing background information and sources for a topic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WritingFinalizeRequest"
+      responses:
+        "200":
+          description: Finalized topic support materials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WritingFinalizeResponse"
+
+  /writing/grade:
+    post:
+      operationId: gradeWritingResponse
+      tags: [writing]
+      summary: Grade a student's writing response against a rubric with AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WritingGradeRequest"
+      responses:
+        "200":
+          description: Grading results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WritingGradeResponse"
 
   /analytics/overview:
     get:
@@ -926,6 +1004,368 @@ components:
         summary:
           type: string
       required: [questions, assessmentTitle, summary]
+
+    WritingGenerateRequest:
+      type: object
+      properties:
+        topic:
+          type: string
+        grade:
+          type: string
+        subject:
+          type: string
+        assessmentType:
+          type: string
+          enum: [CAASPP, ELPAC]
+        difficulty:
+          type: string
+          enum: [easy, medium, hard, mixed]
+        promptCount:
+          type: integer
+          minimum: 1
+          maximum: 5
+        rubricType:
+          type: string
+          description: argumentative | explanatory | narrative | response | analysis
+        genre:
+          type: string
+        rubricParams:
+          $ref: "#/components/schemas/WritingRubricParams"
+        classId:
+          type: string
+        metadata:
+          type: object
+          properties:
+            assessmentTitle:
+              type: string
+      required:
+        [
+          topic,
+          grade,
+          subject,
+          assessmentType,
+          difficulty,
+          promptCount,
+          rubricType,
+          genre,
+          rubricParams,
+        ]
+
+    WritingSuggestionRequest:
+      type: object
+      properties:
+        grade:
+          type: string
+        rubricType:
+          type: string
+        difficulty:
+          type: string
+          enum: [easy, medium, hard, mixed]
+        genre:
+          type: string
+        subject:
+          type: string
+        assessmentType:
+          type: string
+          enum: [CAASPP, ELPAC]
+      required: [grade, rubricType, difficulty, genre]
+
+    WritingSuggestionResponse:
+      type: object
+      properties:
+        suggestions:
+          type: array
+          items:
+            type: string
+      required: [suggestions]
+
+    WritingFinalizeRequest:
+      type: object
+      properties:
+        topic:
+          type: string
+        grade:
+          type: string
+        subject:
+          type: string
+        assessmentType:
+          type: string
+          enum: [CAASPP, ELPAC]
+        difficulty:
+          type: string
+          enum: [easy, medium, hard, mixed]
+        rubricType:
+          type: string
+        genre:
+          type: string
+      required: [topic, grade, difficulty, rubricType, genre]
+
+    WritingFinalizeResponse:
+      type: object
+      properties:
+        backgroundInformation:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/WritingSource"
+      required: [backgroundInformation, sources]
+
+    WritingRubricParams:
+      type: object
+      properties:
+        minWords:
+          type: integer
+        maxWords:
+          type: integer
+        minParagraphs:
+          type: integer
+        maxParagraphs:
+          type: integer
+        requireThesis:
+          type: boolean
+        requireIntroConclusion:
+          type: boolean
+        minCitations:
+          type: integer
+        maxCitations:
+          type: integer
+        additionalInstructions:
+          type: string
+      required:
+        [
+          minWords,
+          maxWords,
+          minParagraphs,
+          maxParagraphs,
+          requireThesis,
+          requireIntroConclusion,
+          minCitations,
+          maxCitations,
+        ]
+
+    WritingSource:
+      type: object
+      properties:
+        title:
+          type: string
+        author:
+          type: string
+        year:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [article, book, website, primary_source, video]
+        url:
+          type: string
+      required: [title, description, type]
+
+    WritingPrompt:
+      type: object
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        type:
+          type: string
+        skill:
+          type: string
+        difficulty:
+          type: string
+      required: [id, text, type, skill, difficulty]
+
+    RubricLevel:
+      type: object
+      properties:
+        score:
+          type: integer
+        label:
+          type: string
+        description:
+          type: string
+      required: [score, label, description]
+
+    RubricCriterion:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        weight:
+          type: number
+        points:
+          type: integer
+        levels:
+          type: array
+          items:
+            $ref: "#/components/schemas/RubricLevel"
+      required: [id, name, description, weight, points, levels]
+
+    WritingRubric:
+      type: object
+      properties:
+        totalPoints:
+          type: integer
+        criteria:
+          type: array
+          items:
+            $ref: "#/components/schemas/RubricCriterion"
+      required: [totalPoints, criteria]
+
+    WritingGenerateResponse:
+      type: object
+      properties:
+        assessmentTitle:
+          type: string
+        summary:
+          type: string
+        backgroundInformation:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/WritingSource"
+        writingPrompts:
+          type: array
+          items:
+            $ref: "#/components/schemas/WritingPrompt"
+        rubric:
+          $ref: "#/components/schemas/WritingRubric"
+      required:
+        [
+          assessmentTitle,
+          summary,
+          backgroundInformation,
+          sources,
+          writingPrompts,
+          rubric,
+        ]
+
+    WritingGradeRequest:
+      type: object
+      properties:
+        studentResponse:
+          type: string
+        writingPrompt:
+          type: string
+        backgroundInformation:
+          type: string
+        rubric:
+          $ref: "#/components/schemas/WritingRubric"
+        rubricParams:
+          $ref: "#/components/schemas/WritingRubricParams"
+        grade:
+          type: string
+        subject:
+          type: string
+        studentName:
+          type: string
+      required:
+        [
+          studentResponse,
+          writingPrompt,
+          backgroundInformation,
+          rubric,
+          rubricParams,
+          grade,
+          subject,
+        ]
+
+    WritingCriteriaScore:
+      type: object
+      properties:
+        criterionId:
+          type: string
+        criterionName:
+          type: string
+        score:
+          type: integer
+        maxScore:
+          type: integer
+        level:
+          type: string
+        feedback:
+          type: string
+        quotes:
+          type: array
+          items:
+            type: string
+      required:
+        [criterionId, criterionName, score, maxScore, level, feedback, quotes]
+
+    WritingOverallFeedback:
+      type: object
+      properties:
+        strengths:
+          type: array
+          items:
+            type: string
+        areasForImprovement:
+          type: array
+          items:
+            type: string
+        teacherNote:
+          type: string
+        studentSummary:
+          type: string
+      required: [strengths, areasForImprovement, teacherNote, studentSummary]
+
+    WritingMeetsRequirements:
+      type: object
+      properties:
+        wordCount:
+          type: boolean
+        paragraphCount:
+          type: boolean
+        citations:
+          type: boolean
+        thesis:
+          type: boolean
+        introConclusion:
+          type: boolean
+      required: [wordCount, paragraphCount, citations, thesis, introConclusion]
+
+    WritingGradeResponse:
+      type: object
+      properties:
+        totalScore:
+          type: integer
+        maxScore:
+          type: integer
+        percentage:
+          type: number
+        criteriaScores:
+          type: array
+          items:
+            $ref: "#/components/schemas/WritingCriteriaScore"
+        overallFeedback:
+          $ref: "#/components/schemas/WritingOverallFeedback"
+        wordCount:
+          type: integer
+        paragraphCount:
+          type: integer
+        citationCount:
+          type: integer
+        meetsRequirements:
+          $ref: "#/components/schemas/WritingMeetsRequirements"
+      required:
+        [
+          totalScore,
+          maxScore,
+          percentage,
+          criteriaScores,
+          overallFeedback,
+          wordCount,
+          paragraphCount,
+          citationCount,
+          meetsRequirements,
+        ]
 
     AnalyticsOverview:
       type: object

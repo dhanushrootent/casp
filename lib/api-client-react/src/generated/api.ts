@@ -46,6 +46,14 @@ import type {
   UpdateUserRequest,
   UploadSyllabusRequest,
   User,
+  WritingFinalizeRequest,
+  WritingFinalizeResponse,
+  WritingGenerateRequest,
+  WritingGenerateResponse,
+  WritingGradeRequest,
+  WritingGradeResponse,
+  WritingSuggestionRequest,
+  WritingSuggestionResponse,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1690,6 +1698,352 @@ export const useUploadSyllabus = <
   TContext
 > => {
   return useMutation(getUploadSyllabusMutationOptions(options));
+};
+
+/**
+ * @summary Generate a writing activity (prompts, sources, rubric) with AI
+ */
+export const getGenerateWritingActivityUrl = () => {
+  return `/api/writing/generate`;
+};
+
+export const generateWritingActivity = async (
+  writingGenerateRequest: WritingGenerateRequest,
+  options?: RequestInit,
+): Promise<WritingGenerateResponse> => {
+  return customFetch<WritingGenerateResponse>(getGenerateWritingActivityUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(writingGenerateRequest),
+  });
+};
+
+export const getGenerateWritingActivityMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateWritingActivity>>,
+    TError,
+    { data: BodyType<WritingGenerateRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateWritingActivity>>,
+  TError,
+  { data: BodyType<WritingGenerateRequest> },
+  TContext
+> => {
+  const mutationKey = ["generateWritingActivity"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateWritingActivity>>,
+    { data: BodyType<WritingGenerateRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return generateWritingActivity(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateWritingActivityMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateWritingActivity>>
+>;
+export type GenerateWritingActivityMutationBody =
+  BodyType<WritingGenerateRequest>;
+export type GenerateWritingActivityMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Generate a writing activity (prompts, sources, rubric) with AI
+ */
+export const useGenerateWritingActivity = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateWritingActivity>>,
+    TError,
+    { data: BodyType<WritingGenerateRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateWritingActivity>>,
+  TError,
+  { data: BodyType<WritingGenerateRequest> },
+  TContext
+> => {
+  return useMutation(getGenerateWritingActivityMutationOptions(options));
+};
+
+/**
+ * @summary Suggest writing topics based on grade, type, and difficulty
+ */
+export const getSuggestWritingTopicsUrl = () => {
+  return `/api/writing/suggestions`;
+};
+
+export const suggestWritingTopics = async (
+  writingSuggestionRequest: WritingSuggestionRequest,
+  options?: RequestInit,
+): Promise<WritingSuggestionResponse> => {
+  return customFetch<WritingSuggestionResponse>(getSuggestWritingTopicsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(writingSuggestionRequest),
+  });
+};
+
+export const getSuggestWritingTopicsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof suggestWritingTopics>>,
+    TError,
+    { data: BodyType<WritingSuggestionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof suggestWritingTopics>>,
+  TError,
+  { data: BodyType<WritingSuggestionRequest> },
+  TContext
+> => {
+  const mutationKey = ["suggestWritingTopics"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof suggestWritingTopics>>,
+    { data: BodyType<WritingSuggestionRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return suggestWritingTopics(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SuggestWritingTopicsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof suggestWritingTopics>>
+>;
+export type SuggestWritingTopicsMutationBody =
+  BodyType<WritingSuggestionRequest>;
+export type SuggestWritingTopicsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Suggest writing topics based on grade, type, and difficulty
+ */
+export const useSuggestWritingTopics = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof suggestWritingTopics>>,
+    TError,
+    { data: BodyType<WritingSuggestionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof suggestWritingTopics>>,
+  TError,
+  { data: BodyType<WritingSuggestionRequest> },
+  TContext
+> => {
+  return useMutation(getSuggestWritingTopicsMutationOptions(options));
+};
+
+/**
+ * @summary Generate student-facing background information and sources for a topic
+ */
+export const getFinalizeWritingTopicUrl = () => {
+  return `/api/writing/finalize`;
+};
+
+export const finalizeWritingTopic = async (
+  writingFinalizeRequest: WritingFinalizeRequest,
+  options?: RequestInit,
+): Promise<WritingFinalizeResponse> => {
+  return customFetch<WritingFinalizeResponse>(getFinalizeWritingTopicUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(writingFinalizeRequest),
+  });
+};
+
+export const getFinalizeWritingTopicMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeWritingTopic>>,
+    TError,
+    { data: BodyType<WritingFinalizeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof finalizeWritingTopic>>,
+  TError,
+  { data: BodyType<WritingFinalizeRequest> },
+  TContext
+> => {
+  const mutationKey = ["finalizeWritingTopic"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof finalizeWritingTopic>>,
+    { data: BodyType<WritingFinalizeRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return finalizeWritingTopic(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type FinalizeWritingTopicMutationResult = NonNullable<
+  Awaited<ReturnType<typeof finalizeWritingTopic>>
+>;
+export type FinalizeWritingTopicMutationBody = BodyType<WritingFinalizeRequest>;
+export type FinalizeWritingTopicMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Generate student-facing background information and sources for a topic
+ */
+export const useFinalizeWritingTopic = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeWritingTopic>>,
+    TError,
+    { data: BodyType<WritingFinalizeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof finalizeWritingTopic>>,
+  TError,
+  { data: BodyType<WritingFinalizeRequest> },
+  TContext
+> => {
+  return useMutation(getFinalizeWritingTopicMutationOptions(options));
+};
+
+/**
+ * @summary Grade a student's writing response against a rubric with AI
+ */
+export const getGradeWritingResponseUrl = () => {
+  return `/api/writing/grade`;
+};
+
+export const gradeWritingResponse = async (
+  writingGradeRequest: WritingGradeRequest,
+  options?: RequestInit,
+): Promise<WritingGradeResponse> => {
+  return customFetch<WritingGradeResponse>(getGradeWritingResponseUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(writingGradeRequest),
+  });
+};
+
+export const getGradeWritingResponseMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof gradeWritingResponse>>,
+    TError,
+    { data: BodyType<WritingGradeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof gradeWritingResponse>>,
+  TError,
+  { data: BodyType<WritingGradeRequest> },
+  TContext
+> => {
+  const mutationKey = ["gradeWritingResponse"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof gradeWritingResponse>>,
+    { data: BodyType<WritingGradeRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return gradeWritingResponse(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GradeWritingResponseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof gradeWritingResponse>>
+>;
+export type GradeWritingResponseMutationBody = BodyType<WritingGradeRequest>;
+export type GradeWritingResponseMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Grade a student's writing response against a rubric with AI
+ */
+export const useGradeWritingResponse = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof gradeWritingResponse>>,
+    TError,
+    { data: BodyType<WritingGradeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof gradeWritingResponse>>,
+  TError,
+  { data: BodyType<WritingGradeRequest> },
+  TContext
+> => {
+  return useMutation(getGradeWritingResponseMutationOptions(options));
 };
 
 /**

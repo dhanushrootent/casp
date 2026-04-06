@@ -99,8 +99,12 @@
   * {
     @apply border-border;
   }
+  /* Slightly larger than browser default (~16px) so all rem-based UI reads more comfortably app-wide */
+  html {
+    font-size: 112.5%;
+  }
   body {
-    @apply bg-background text-foreground antialiased font-sans;
+    @apply bg-background text-foreground antialiased font-sans text-base;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);

@@ -471,6 +471,206 @@ export const UploadSyllabusResponse = zod.object({
 });
 
 /**
+ * @summary Generate a writing activity (prompts, sources, rubric) with AI
+ */
+export const generateWritingActivityBodyPromptCountMax = 5;
+
+export const GenerateWritingActivityBody = zod.object({
+  topic: zod.string(),
+  grade: zod.string(),
+  subject: zod.string(),
+  assessmentType: zod.enum(["CAASPP", "ELPAC"]),
+  difficulty: zod.enum(["easy", "medium", "hard", "mixed"]),
+  promptCount: zod
+    .number()
+    .min(1)
+    .max(generateWritingActivityBodyPromptCountMax),
+  rubricType: zod
+    .string()
+    .describe("argumentative | explanatory | narrative | response | analysis"),
+  genre: zod.string(),
+  rubricParams: zod.object({
+    minWords: zod.number(),
+    maxWords: zod.number(),
+    minParagraphs: zod.number(),
+    maxParagraphs: zod.number(),
+    requireThesis: zod.boolean(),
+    requireIntroConclusion: zod.boolean(),
+    minCitations: zod.number(),
+    maxCitations: zod.number(),
+    additionalInstructions: zod.string().optional(),
+  }),
+  classId: zod.string().optional(),
+  metadata: zod
+    .object({
+      assessmentTitle: zod.string().optional(),
+    })
+    .optional(),
+});
+
+export const GenerateWritingActivityResponse = zod.object({
+  assessmentTitle: zod.string(),
+  summary: zod.string(),
+  backgroundInformation: zod.string(),
+  sources: zod.array(
+    zod.object({
+      title: zod.string(),
+      author: zod.string().optional(),
+      year: zod.string().optional(),
+      description: zod.string(),
+      type: zod.enum(["article", "book", "website", "primary_source", "video"]),
+      url: zod.string().optional(),
+    }),
+  ),
+  writingPrompts: zod.array(
+    zod.object({
+      id: zod.string(),
+      text: zod.string(),
+      type: zod.string(),
+      skill: zod.string(),
+      difficulty: zod.string(),
+    }),
+  ),
+  rubric: zod.object({
+    totalPoints: zod.number(),
+    criteria: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        description: zod.string(),
+        weight: zod.number(),
+        points: zod.number(),
+        levels: zod.array(
+          zod.object({
+            score: zod.number(),
+            label: zod.string(),
+            description: zod.string(),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+/**
+ * @summary Suggest writing topics based on grade, type, and difficulty
+ */
+export const SuggestWritingTopicsBody = zod.object({
+  grade: zod.string(),
+  rubricType: zod.string(),
+  difficulty: zod.enum(["easy", "medium", "hard", "mixed"]),
+  genre: zod.string(),
+  subject: zod.string().optional(),
+  assessmentType: zod.enum(["CAASPP", "ELPAC"]).optional(),
+});
+
+export const SuggestWritingTopicsResponse = zod.object({
+  suggestions: zod.array(zod.string()),
+});
+
+/**
+ * @summary Generate student-facing background information and sources for a topic
+ */
+export const FinalizeWritingTopicBody = zod.object({
+  topic: zod.string(),
+  grade: zod.string(),
+  subject: zod.string().optional(),
+  assessmentType: zod.enum(["CAASPP", "ELPAC"]).optional(),
+  difficulty: zod.enum(["easy", "medium", "hard", "mixed"]),
+  rubricType: zod.string(),
+  genre: zod.string(),
+});
+
+export const FinalizeWritingTopicResponse = zod.object({
+  backgroundInformation: zod.string(),
+  sources: zod.array(
+    zod.object({
+      title: zod.string(),
+      author: zod.string().optional(),
+      year: zod.string().optional(),
+      description: zod.string(),
+      type: zod.enum(["article", "book", "website", "primary_source", "video"]),
+      url: zod.string().optional(),
+    }),
+  ),
+});
+
+/**
+ * @summary Grade a student's writing response against a rubric with AI
+ */
+export const GradeWritingResponseBody = zod.object({
+  studentResponse: zod.string(),
+  writingPrompt: zod.string(),
+  backgroundInformation: zod.string(),
+  rubric: zod.object({
+    totalPoints: zod.number(),
+    criteria: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        description: zod.string(),
+        weight: zod.number(),
+        points: zod.number(),
+        levels: zod.array(
+          zod.object({
+            score: zod.number(),
+            label: zod.string(),
+            description: zod.string(),
+          }),
+        ),
+      }),
+    ),
+  }),
+  rubricParams: zod.object({
+    minWords: zod.number(),
+    maxWords: zod.number(),
+    minParagraphs: zod.number(),
+    maxParagraphs: zod.number(),
+    requireThesis: zod.boolean(),
+    requireIntroConclusion: zod.boolean(),
+    minCitations: zod.number(),
+    maxCitations: zod.number(),
+    additionalInstructions: zod.string().optional(),
+  }),
+  grade: zod.string(),
+  subject: zod.string(),
+  studentName: zod.string().optional(),
+});
+
+export const GradeWritingResponseResponse = zod.object({
+  totalScore: zod.number(),
+  maxScore: zod.number(),
+  percentage: zod.number(),
+  criteriaScores: zod.array(
+    zod.object({
+      criterionId: zod.string(),
+      criterionName: zod.string(),
+      score: zod.number(),
+      maxScore: zod.number(),
+      level: zod.string(),
+      feedback: zod.string(),
+      quotes: zod.array(zod.string()),
+    }),
+  ),
+  overallFeedback: zod.object({
+    strengths: zod.array(zod.string()),
+    areasForImprovement: zod.array(zod.string()),
+    teacherNote: zod.string(),
+    studentSummary: zod.string(),
+  }),
+  wordCount: zod.number(),
+  paragraphCount: zod.number(),
+  citationCount: zod.number(),
+  meetsRequirements: zod.object({
+    wordCount: zod.boolean(),
+    paragraphCount: zod.boolean(),
+    citations: zod.boolean(),
+    thesis: zod.boolean(),
+    introConclusion: zod.boolean(),
+  }),
+});
+
+/**
  * @summary Get analytics overview
  */
 export const GetAnalyticsOverviewQueryParams = zod.object({

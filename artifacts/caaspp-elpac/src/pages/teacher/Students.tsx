@@ -7,6 +7,20 @@ import { useAuth } from '@/hooks/use-auth';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
+import { WritingRubricGradeView } from '@/components/teacher/WritingRubricGradeView';
+
+function parseWritingResultFeedback(feedback: unknown): any | null {
+  if (typeof feedback !== 'string' || feedback.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(feedback);
+    if (parsed && typeof parsed === 'object' && parsed.kind === 'ai_writing_result_v1') {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export default function TeacherStudents() {
   const { user } = useAuth();
@@ -58,7 +72,7 @@ export default function TeacherStudents() {
     return (
       <div className="bg-blue-50/30 p-8 rounded-xl border border-blue-100/50 m-4 mt-0 animate-in fade-in slide-in-from-top-2 duration-300">
         <div className="flex items-start gap-4 mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
+          <div className="w-12 h-12 rounded-2xl bg-linear-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
             <BrainCircuit className="w-6 h-6" />
           </div>
           <div>
@@ -102,6 +116,14 @@ export default function TeacherStudents() {
               {(analytics as any).detailedTranscript.map((transcript: any, idx: number) => {
                 const isResultExpanded = expandedResults[idx.toString()];
                 const isGenerating = generateInsightsMutation.isPending && generateInsightsMutation.variables?.resultId === transcript.resultId;
+                const writingFeedback = parseWritingResultFeedback(transcript.feedback);
+                const essayAnswers = (transcript.answeredQuestions || []).filter(
+                  (q: any) =>
+                    q &&
+                    typeof q.studentAnswer === 'string' &&
+                    q.studentAnswer.trim().length > 0 &&
+                    (!q.correctAnswer || q.correctAnswer === 'Subjective'),
+                );
                 return (
                   <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     <button 
@@ -117,7 +139,103 @@ export default function TeacherStudents() {
                     
                     {isResultExpanded && (
                       <div className="p-5 pt-0 border-t border-slate-100">
-                        {transcript.feedback ? (
+                        {writingFeedback ? (
+                          <div className="space-y-4 mb-6 mt-4">
+                            <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 relative">
+                              <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                <Sparkles className="w-4 h-4" /> Gemini Writing Evaluation
+                              </h5>
+                              <p className="text-sm text-slate-700">{writingFeedback.summary}</p>
+                              <button
+                                disabled={isGenerating}
+                                onClick={() => handleGenerateInsights(transcript.resultId)}
+                                className="absolute top-4 right-4 text-xs font-medium bg-white text-blue-600 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors disabled:opacity-50"
+                              >
+                                {isGenerating ? <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> : null}
+                                Regenerate
+                              </button>
+                            </div>
+
+                            {essayAnswers.length > 0 ? (
+                              <div className="space-y-3">
+                                <h5 className="text-sm font-bold text-slate-800">Student Essay Response</h5>
+                                {essayAnswers.map((q: any, qIdx: number) => (
+                                  <div key={qIdx} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                    <div className="font-semibold text-slate-800 mb-2">{q.text || `Essay Question ${qIdx + 1}`}</div>
+                                    <div className="text-xs tracking-wider uppercase font-semibold text-slate-500 mb-1">Submitted Response</div>
+                                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{q.studentAnswer}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {(writingFeedback.questions || []).map((item: any, itemIdx: number) => {
+                              const grading = item?.grading;
+                              if (!grading) return null;
+                              return (
+                                <div key={item.questionId || itemIdx} className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="font-semibold text-slate-900">Writing Feedback</div>
+                                    <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                                      {grading.totalScore}/{grading.maxScore} ({Math.round(grading.percentage || 0)}%)
+                                    </span>
+                                  </div>
+
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                                      Rubric &amp; criterion performance
+                                    </div>
+                                    <WritingRubricGradeView rubric={item.rubric} grading={grading} />
+                                    <p className="mt-2 text-xs text-slate-500">
+                                      “Met” means the student earned at least 70% of the points for that row; “Partial” is 40–69%; below that is “Not met”.
+                                    </p>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                                      <div className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2">Strengths</div>
+                                      {(grading.overallFeedback?.strengths || []).length > 0 ? (
+                                        <div className="space-y-2 text-sm text-slate-700">
+                                          {(grading.overallFeedback?.strengths || []).map((strength: string, strengthIdx: number) => (
+                                            <div key={strengthIdx} className="flex gap-2">
+                                              <span className="text-emerald-600 font-bold">•</span>
+                                              <span>{strength}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="text-sm text-slate-500">No strength notes returned.</div>
+                                      )}
+                                    </div>
+
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                                      <div className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">Areas of Weakness</div>
+                                      {(grading.overallFeedback?.areasForImprovement || []).length > 0 ? (
+                                        <div className="space-y-2 text-sm text-slate-700">
+                                          {(grading.overallFeedback?.areasForImprovement || []).map((area: string, areaIdx: number) => (
+                                            <div key={areaIdx} className="flex gap-2">
+                                              <span className="text-amber-600 font-bold">•</span>
+                                              <span>{area}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="text-sm text-slate-500">No improvement notes returned.</div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {grading.overallFeedback?.teacherNote ? (
+                                    <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+                                      <div className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2">Teacher Note</div>
+                                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{grading.overallFeedback.teacherNote}</p>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : transcript.feedback ? (
                           <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 mb-6 mt-4 relative">
                             <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
                               <Sparkles className="w-4 h-4" /> AI Feedback on this Result
@@ -139,7 +257,7 @@ export default function TeacherStudents() {
                             <button 
                               onClick={() => handleGenerateInsights(transcript.resultId)}
                               disabled={isGenerating}
-                              className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-5 py-2.5 rounded-xl font-medium hover:shadow-lg hover:shadow-blue-500/25 transition-all w-full md:w-auto disabled:opacity-70 disabled:cursor-not-allowed"
+                              className="flex items-center justify-center gap-2 bg-linear-to-r from-blue-500 to-indigo-600 text-white px-5 py-2.5 rounded-xl font-medium hover:shadow-lg hover:shadow-blue-500/25 transition-all w-full md:w-auto disabled:opacity-70 disabled:cursor-not-allowed"
                             >
                               {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                               {isGenerating ? "Analyzing Responses..." : "Generate Test Insights"}

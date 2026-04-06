@@ -7,6 +7,108 @@ import { ai } from "@workspace/integrations-gemini-ai";
 
 const router: IRouter = Router();
 
+function parseWritingActivityPayload(explanation: string | null | undefined): any | null {
+  if (!explanation) return null;
+  try {
+    const parsed = JSON.parse(explanation);
+    if (parsed && typeof parsed === "object" && parsed.kind === "writing_activity_v1") {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function gradeWritingAnswer(params: {
+  studentResponse: string;
+  writingPrompt: string;
+  backgroundInformation: string;
+  sources: unknown[];
+  rubric: unknown;
+  rubricParams: unknown;
+  grade: string;
+  subject: string;
+  studentName?: string;
+}) {
+  const prompt = `You are an expert California K-12 writing teacher and rubric-based scorer.
+
+Grade Level: ${params.grade}
+Subject: ${params.subject}
+Student Name (optional): ${params.studentName ?? "(not provided)"}
+
+WRITING PROMPT:
+${params.writingPrompt}
+
+BACKGROUND INFORMATION:
+${params.backgroundInformation}
+
+SOURCES PROVIDED TO STUDENT:
+${JSON.stringify(params.sources ?? [], null, 2)}
+
+RUBRIC:
+${JSON.stringify(params.rubric ?? {}, null, 2)}
+
+RUBRIC PARAMS:
+${JSON.stringify(params.rubricParams ?? {}, null, 2)}
+
+STUDENT RESPONSE:
+${params.studentResponse}
+
+SCORING RULES:
+- Score strictly against the rubric levels and requirements provided.
+- Evaluate how well the response uses or aligns with the provided background information and sources.
+- Consider accuracy, relevance, evidence use, citations, organization, conventions, thesis, introduction, and conclusion where applicable.
+- Compute wordCount, paragraphCount, citationCount, and requirement booleans.
+- Return only valid JSON in this exact format:
+{
+  "totalScore": 0,
+  "maxScore": 0,
+  "percentage": 0,
+  "criteriaScores": [
+    {
+      "criterionId": "string",
+      "criterionName": "string",
+      "score": 0,
+      "maxScore": 0,
+      "level": "string",
+      "feedback": "string",
+      "quotes": ["string"]
+    }
+  ],
+  "overallFeedback": {
+    "strengths": ["string"],
+    "areasForImprovement": ["string"],
+    "teacherNote": "string",
+    "studentSummary": "string"
+  },
+  "wordCount": 0,
+  "paragraphCount": 0,
+  "citationCount": 0,
+  "meetsRequirements": {
+    "wordCount": true,
+    "paragraphCount": true,
+    "citations": true,
+    "thesis": true,
+    "introConclusion": true
+  }
+}`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    config: {
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+    },
+  });
+
+  const rawText = response.text ?? "";
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Failed to parse AI writing grade response");
+  return JSON.parse(jsonMatch[0]);
+}
+
 function firstQueryString(value: unknown): string | undefined {
   if (typeof value === "string" && value.length > 0) return value;
   if (Array.isArray(value) && typeof value[0] === "string") return value[0];
@@ -118,6 +220,8 @@ router.post("/results", async (req: Request, res: Response) => {
   let score = 0;
   let maxScore = 0;
 
+  const answerFeedback: Array<{ questionId: string; grading?: unknown; rubric?: unknown }> = [];
+
   for (const question of questions) {
     const pts = Number(question.points) || 0;
     maxScore += pts;
@@ -125,7 +229,34 @@ router.post("/results", async (req: Request, res: Response) => {
     if (submitted && question.correctAnswer && submitted.answer === question.correctAnswer) {
       score += pts;
     } else if (submitted && question.type === "essay") {
-      score += pts * 0.5;
+      const writingPayload = parseWritingActivityPayload(question.explanation);
+      if (writingPayload) {
+        try {
+          const grading = await gradeWritingAnswer({
+            studentResponse: submitted.answer,
+            writingPrompt: question.text,
+            backgroundInformation: writingPayload.backgroundInformation ?? "",
+            sources: writingPayload.sources ?? [],
+            rubric: writingPayload.rubric ?? {},
+            rubricParams: writingPayload.rubricParams ?? {},
+            grade: assessment.grade,
+            subject: assessment.subject,
+          });
+
+          const awarded = Math.max(0, Math.min(pts, Number(grading?.totalScore) || 0));
+          score += awarded;
+          answerFeedback.push({
+            questionId: question.id,
+            grading,
+            rubric: writingPayload.rubric ?? {},
+          });
+        } catch (error) {
+          console.error("[POST /api/results] Failed AI grade for essay:", error);
+          score += pts * 0.5;
+        }
+      } else {
+        score += pts * 0.5;
+      }
     }
   }
 
@@ -138,6 +269,14 @@ router.post("/results", async (req: Request, res: Response) => {
     feedback = "You should focus on reviewing the core concepts, specifically the reading and writing rubrics covered in this assessment.";
   } else if (percentage < 80) {
     feedback = "Good work. Focus on citing more specific evidence in the future to improve your score further.";
+  }
+
+  if (answerFeedback.length > 0) {
+    feedback = JSON.stringify({
+      kind: "ai_writing_result_v1",
+      summary: feedback,
+      questions: answerFeedback,
+    });
   }
 
   const id = uuidv4();
