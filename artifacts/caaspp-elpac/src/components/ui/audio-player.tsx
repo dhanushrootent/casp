@@ -7,9 +7,10 @@ interface AudioPlayerProps {
   text: string;
   className?: string;
   buttonSize?: 'sm' | 'default' | 'lg';
+  iconOnly?: boolean;
 }
 
-export function AudioPlayer({ text, className, buttonSize = 'sm' }: AudioPlayerProps) {
+export function AudioPlayer({ text, className, buttonSize = 'sm', iconOnly = false }: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isSupported, setIsSupported] = useState(true);
 
@@ -60,17 +61,19 @@ export function AudioPlayer({ text, className, buttonSize = 'sm' }: AudioPlayerP
       variant={isPlaying ? "destructive" : "outline"}
       size={buttonSize}
       onClick={toggleAudio}
-      className={cn("gap-2 shadow-sm", className)}
+      className={cn("gap-2 shadow-sm", iconOnly && "px-2", className)}
       title={isPlaying ? "Stop Audio" : "Play text as Audio"}
       aria-label={isPlaying ? "Stop Audio" : "Play text as Audio"}
     >
       {isPlaying ? (
         <>
-          <Square className="w-4 h-4 fill-current" /> Stop
+          <Square className="w-4 h-4 fill-current" />
+          {!iconOnly ? "Stop" : null}
         </>
       ) : (
         <>
-          <Volume2 className="w-4 h-4" /> Listen
+          <Volume2 className="w-4 h-4" />
+          {!iconOnly ? "Listen" : null}
         </>
       )}
     </Button>

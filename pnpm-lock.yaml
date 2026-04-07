@@ -625,7 +625,7 @@ importers:
   lib/api-client-react:
     dependencies:
       '@tanstack/react-query':
-        specifier: 'catalog:'
+        specifier: ^5.90.21
         version: 5.90.21(react@19.1.0)
 
   lib/api-spec:
@@ -637,7 +637,7 @@ importers:
   lib/api-zod:
     dependencies:
       zod:
-        specifier: 'catalog:'
+        specifier: ^3.25.76
         version: 3.25.76
 
   lib/db:

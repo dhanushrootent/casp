@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
   BookOpen,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -26,6 +27,13 @@ import {
   useListClasses,
   useSuggestWritingTopics,
 } from "@workspace/api-client-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type AssessmentType = "" | "CAASPP" | "ELPAC";
 type Difficulty = "" | "easy" | "medium" | "hard" | "mixed";
@@ -183,6 +191,38 @@ function newRubricCriterion(): RubricCriterion {
   };
 }
 
+type RubricLevelDraft = {
+  exemplary: string;
+  proficient: string;
+  developing: string;
+  beginning: string;
+};
+
+function criterionLevelsToDraft(c: RubricCriterion): RubricLevelDraft {
+  const get = (label: string) => c.levels?.find((l) => l.label === label)?.description ?? "";
+  return {
+    exemplary: get("Exemplary"),
+    proficient: get("Proficient"),
+    developing: get("Developing"),
+    beginning: get("Beginning"),
+  };
+}
+
+function applyLevelDraftToCriterion(c: RubricCriterion, draft: RubricLevelDraft): RubricCriterion {
+  const pairs: [string, keyof RubricLevelDraft][] = [
+    ["Exemplary", "exemplary"],
+    ["Proficient", "proficient"],
+    ["Developing", "developing"],
+    ["Beginning", "beginning"],
+  ];
+  const nextLevels = [...(c.levels || [])];
+  for (const [label, key] of pairs) {
+    const i = nextLevels.findIndex((l) => l.label === label);
+    if (i >= 0) nextLevels[i] = { ...nextLevels[i], description: draft[key] };
+  }
+  return { ...c, levels: nextLevels };
+}
+
 export default function WritingGenerator() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -219,6 +259,13 @@ export default function WritingGenerator() {
   const [selectedPromptId, setSelectedPromptId] = useState<string>("");
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
   const [finalizedTopicData, setFinalizedTopicData] = useState<FinalizedTopicData | null>(null);
+  const [rubricSplitCriterionIdx, setRubricSplitCriterionIdx] = useState<number | null>(null);
+  const [rubricSplitDraft, setRubricSplitDraft] = useState<RubricLevelDraft>({
+    exemplary: "",
+    proficient: "",
+    developing: "",
+    beginning: "",
+  });
 
   const generateMutation = useGenerateWritingActivity();
   const finalizeMutation = useFinalizeWritingTopic();
@@ -562,11 +609,14 @@ export default function WritingGenerator() {
                       value={subject}
                       onChange={(e) => setSubject(e.target.value)}
                     >
-                      <option value="">Select subject area</option>
-                      <option>English Language Arts</option>
-                      <option>Mathematics</option>
-                      <option>Science</option>
-                      <option>Listening/Speaking</option>
+                      <option value="" disabled hidden>
+                        select subject area
+                      </option>
+                      <option value="English Language Arts">English Language Arts</option>
+                      <option value="Mathematics">Mathematics</option>
+                      <option value="Science">Science</option>
+                      <option value="Listening/Speaking">Listening/Speaking</option>
+                      <option value="History/Social Studies">History/Social Studies</option>
                     </select>
                   </div>
                 </div>
@@ -619,7 +669,7 @@ export default function WritingGenerator() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Genre</label>
+                    <label className="block text-sm font-medium mb-2">Subject Type</label>
                     <select
                       className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
                       value={genre}
@@ -1285,118 +1335,179 @@ export default function WritingGenerator() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="overflow-x-auto">
-                        <table className="min-w-[900px] w-full border-collapse">
-                          <thead>
-                            <tr className="text-xs uppercase text-muted-foreground">
-                              <th className="text-left p-2 border-b">Criterion</th>
-                              <th className="text-left p-2 border-b w-24">Points</th>
-                              <th className="text-left p-2 border-b w-28">Weight %</th>
-                              <th className="text-left p-2 border-b">Exemplary</th>
-                              <th className="text-left p-2 border-b">Proficient</th>
-                              <th className="text-left p-2 border-b">Developing</th>
-                              <th className="text-left p-2 border-b">Beginning</th>
-                              <th className="text-left p-2 border-b w-10"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {generated.rubric.criteria.map((c, idx) => {
-                              const levels = c.levels || [];
-                              const getLevel = (label: string) =>
-                                levels.find((l) => l.label === label) || levels[0] || null;
-                              const exemplary = getLevel("Exemplary");
-                              const proficient = getLevel("Proficient");
-                              const developing = getLevel("Developing");
-                              const beginning = getLevel("Beginning");
-
-                              const setLevelDesc = (label: string, desc: string) => {
+                      <Dialog
+                        open={rubricSplitCriterionIdx !== null}
+                        onOpenChange={(open) => {
+                          if (!open) setRubricSplitCriterionIdx(null);
+                        }}
+                      >
+                        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto sm:rounded-xl">
+                          <DialogHeader>
+                            <DialogTitle>
+                              Rubric split
+                              {rubricSplitCriterionIdx !== null && generated?.rubric.criteria[rubricSplitCriterionIdx] ? (
+                                <span className="block text-sm font-normal text-muted-foreground mt-1">
+                                  {generated.rubric.criteria[rubricSplitCriterionIdx].name}
+                                </span>
+                              ) : null}
+                            </DialogTitle>
+                          </DialogHeader>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            {(
+                              [
+                                { key: "exemplary" as const, label: "Exemplary" },
+                                { key: "proficient" as const, label: "Proficient" },
+                                { key: "developing" as const, label: "Developing" },
+                                { key: "beginning" as const, label: "Beginning" },
+                              ] as const
+                            ).map(({ key, label }) => (
+                              <div key={key} className="space-y-1.5">
+                                <label className="text-xs font-bold uppercase text-muted-foreground">{label}</label>
+                                <textarea
+                                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[100px] resize-y"
+                                  value={rubricSplitDraft[key]}
+                                  onChange={(e) =>
+                                    setRubricSplitDraft((d) => ({ ...d, [key]: e.target.value }))
+                                  }
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <DialogFooter className="gap-2 sm:gap-0">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => setRubricSplitCriterionIdx(null)}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              type="button"
+                              className="gap-2"
+                              onClick={() => {
+                                if (rubricSplitCriterionIdx === null) return;
+                                const idx = rubricSplitCriterionIdx;
                                 setGenerated((p) => {
                                   if (!p) return p;
                                   const nextCriteria = [...p.rubric.criteria];
-                                  const nextLevels = [...(nextCriteria[idx].levels || [])];
-                                  const levelIdx = nextLevels.findIndex((l) => l.label === label);
-                                  if (levelIdx >= 0) nextLevels[levelIdx] = { ...nextLevels[levelIdx], description: desc };
-                                  nextCriteria[idx] = { ...nextCriteria[idx], levels: nextLevels };
+                                  nextCriteria[idx] = applyLevelDraftToCriterion(nextCriteria[idx], rubricSplitDraft);
                                   return { ...p, rubric: { ...p.rubric, criteria: nextCriteria } };
                                 });
-                              };
+                                setRubricSplitCriterionIdx(null);
+                              }}
+                            >
+                              <Check className="w-4 h-4" />
+                              Save
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
 
-                              return (
-                                <tr key={c.id} className="align-top">
-                                  <td className="p-2 border-b">
-                                    <div className="font-semibold">{c.name}</div>
-                                    <div className="text-xs text-muted-foreground">{c.description}</div>
-                                  </td>
-                                  <td className="p-2 border-b font-semibold">{c.points}</td>
-                                  <td className="p-2 border-b">
-                                    <Input
-                                      className="w-24 h-9 rounded-xl"
-                                      type="number"
-                                      value={c.weight}
-                                      onChange={(e) => {
-                                        const v = Number(e.target.value);
-                                        setGenerated((p) => {
-                                          if (!p) return p;
-                                          const nextCriteria = [...p.rubric.criteria];
-                                          nextCriteria[idx] = { ...nextCriteria[idx], weight: Number.isFinite(v) ? v : 0 };
-                                          return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: nextCriteria }) };
-                                        });
-                                      }}
-                                    />
-                                  </td>
-                                  <td className="p-2 border-b">
-                                    <textarea
-                                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
-                                      value={exemplary?.description || ""}
-                                      onChange={(e) => setLevelDesc("Exemplary", e.target.value)}
-                                    />
-                                  </td>
-                                  <td className="p-2 border-b">
-                                    <textarea
-                                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
-                                      value={proficient?.description || ""}
-                                      onChange={(e) => setLevelDesc("Proficient", e.target.value)}
-                                    />
-                                  </td>
-                                  <td className="p-2 border-b">
-                                    <textarea
-                                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
-                                      value={developing?.description || ""}
-                                      onChange={(e) => setLevelDesc("Developing", e.target.value)}
-                                    />
-                                  </td>
-                                  <td className="p-2 border-b">
-                                    <textarea
-                                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[96px] resize-y"
-                                      value={beginning?.description || ""}
-                                      onChange={(e) => setLevelDesc("Beginning", e.target.value)}
-                                    />
-                                  </td>
-                                  <td className="p-2 border-b">
-                                    <button
-                                      type="button"
-                                      className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-border bg-white text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors"
-                                      title="Remove criterion"
-                                      onClick={() =>
-                                        setGenerated((p) => {
-                                          if (!p) return p;
-                                          const nextCriteria = p.rubric.criteria.filter((_, i) => i !== idx);
-                                          const normalized = normalizeWeightsTo100(nextCriteria);
-                                          return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: normalized }) };
-                                        })
-                                      }
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
+                      <div className="overflow-x-auto">
+                        <table className="min-w-[640px] w-full border-collapse">
+                          <thead>
+                            <tr className="text-xs uppercase text-muted-foreground">
+                              <th className="text-left p-2 border-b min-w-[200px]">Criterion</th>
+                              <th className="text-left p-2 border-b w-24">Points</th>
+                              <th className="text-left p-2 border-b w-28">Weight %</th>
+                              <th className="text-left p-2 border-b w-36">Rubric split</th>
+                              <th className="text-left p-2 border-b w-12"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {generated.rubric.criteria.map((c, idx) => (
+                              <tr key={c.id} className="align-top">
+                                <td className="p-2 border-b">
+                                  <Input
+                                    className="mb-2 h-9 rounded-xl font-semibold"
+                                    value={c.name}
+                                    placeholder="Criterion title"
+                                    disabled={!canEditRubric}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setGenerated((p) => {
+                                        if (!p) return p;
+                                        const nextCriteria = [...p.rubric.criteria];
+                                        nextCriteria[idx] = { ...nextCriteria[idx], name: v };
+                                        return { ...p, rubric: { ...p.rubric, criteria: nextCriteria } };
+                                      });
+                                    }}
+                                  />
+                                  <textarea
+                                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs text-muted-foreground focus:ring-2 focus:ring-primary outline-none min-h-[56px] resize-y"
+                                    placeholder="Short description (optional)"
+                                    value={c.description}
+                                    disabled={!canEditRubric}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setGenerated((p) => {
+                                        if (!p) return p;
+                                        const nextCriteria = [...p.rubric.criteria];
+                                        nextCriteria[idx] = { ...nextCriteria[idx], description: v };
+                                        return { ...p, rubric: { ...p.rubric, criteria: nextCriteria } };
+                                      });
+                                    }}
+                                  />
+                                </td>
+                                <td className="p-2 border-b font-semibold">{c.points}</td>
+                                <td className="p-2 border-b">
+                                  <Input
+                                    className="w-24 h-9 rounded-xl"
+                                    type="number"
+                                    disabled={!canEditRubric}
+                                    value={c.weight}
+                                    onChange={(e) => {
+                                      const v = Number(e.target.value);
+                                      setGenerated((p) => {
+                                        if (!p) return p;
+                                        const nextCriteria = [...p.rubric.criteria];
+                                        nextCriteria[idx] = { ...nextCriteria[idx], weight: Number.isFinite(v) ? v : 0 };
+                                        return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: nextCriteria }) };
+                                      });
+                                    }}
+                                  />
+                                </td>
+                                <td className="p-2 border-b">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="rounded-xl whitespace-nowrap"
+                                    disabled={!canEditRubric}
+                                    onClick={() => {
+                                      setRubricSplitCriterionIdx(idx);
+                                      setRubricSplitDraft(criterionLevelsToDraft(c));
+                                    }}
+                                  >
+                                    Rubric split
+                                  </Button>
+                                </td>
+                                <td className="p-2 border-b">
+                                  <button
+                                    type="button"
+                                    className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-border bg-white text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors disabled:opacity-50"
+                                    title="Remove criterion"
+                                    disabled={!canEditRubric}
+                                    onClick={() => {
+                                      setRubricSplitCriterionIdx(null);
+                                      setGenerated((p) => {
+                                        if (!p) return p;
+                                        const nextCriteria = p.rubric.criteria.filter((_, i) => i !== idx);
+                                        const normalized = normalizeWeightsTo100(nextCriteria);
+                                        return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: normalized }) };
+                                      });
+                                    }}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
                             <tr>
                               <td className="p-2 font-bold">Total</td>
                               <td className="p-2 font-bold">{generated.rubric.totalPoints}</td>
                               <td className="p-2 font-bold">{Math.round(weightSum)}%</td>
-                              <td className="p-2" colSpan={4} />
+                              <td className="p-2" colSpan={2} />
                             </tr>
                           </tbody>
                         </table>

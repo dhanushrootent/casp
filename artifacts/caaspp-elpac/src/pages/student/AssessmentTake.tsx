@@ -44,6 +44,7 @@ export default function AssessmentTake() {
   const [timeLeft, setTimeLeft] = useState(0);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [resultId, setResultId] = useState<string | null>(null);
+  const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
 
   // Initialize time remaining when assessment loads
   useEffect(() => {
@@ -63,7 +64,12 @@ export default function AssessmentTake() {
   const questions = assessment?.questions || [];
   const currentQ = questions[currentIdx];
   const writingPayload = parseWritingActivityPayload(currentQ?.explanation);
+  const rubricData = (assessment as any)?.rubric ?? writingPayload?.rubric ?? null;
   const progress = ((currentIdx) / (questions.length || 1)) * 100;
+
+  useEffect(() => {
+    setSelectedSourceIdx(0);
+  }, [currentIdx, currentQ?.id]);
 
   const handleAnswer = (val: string) => {
     if (!currentQ || checkedAnswers[currentQ.id]) return; // disable changing answer after checking
@@ -145,11 +151,16 @@ export default function AssessmentTake() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
-      <header className="h-16 bg-white border-b border-border flex items-center justify-between px-6 sticky top-0 z-10 shadow-sm">
-        <div className="font-display font-bold text-lg text-foreground">{assessment.title}</div>
-        <div className="flex items-center gap-2 bg-red-50 text-red-600 px-4 py-1.5 rounded-full font-mono font-bold text-lg border border-red-100">
-          <Clock className="w-5 h-5" />
-          {formatTime(timeLeft)}
+      <header className="h-16 bg-white border-b border-border grid grid-cols-3 items-center px-6 sticky top-0 z-10 shadow-sm">
+        <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          {currentQ?.type?.replace('_', ' ') || 'Essay'}
+        </div>
+        <div className="font-display font-bold text-lg text-foreground text-center truncate px-3">{assessment.title}</div>
+        <div className="flex items-center justify-end">
+          <div className="flex items-center gap-2 bg-red-50 text-red-600 px-4 py-1.5 rounded-full font-mono font-bold text-lg border border-red-100 shadow absolute right-6 top-4 z-20">
+            <Clock className="w-5 h-5" />
+            {formatTime(timeLeft)}
+          </div>
         </div>
       </header>
 
@@ -162,193 +173,180 @@ export default function AssessmentTake() {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-6 flex flex-col justify-center">
-        <div className="mb-6 flex justify-between items-center text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          <span>Question {currentIdx + 1} of {questions.length}</span>
-          <span>{currentQ?.type.replace('_', ' ')}</span>
-        </div>
-
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentIdx}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.3 }}
-          >
-            <Card className="shadow-lg border-border/50">
-              <CardContent className="p-8 md:p-12">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
-                  <h3 className="text-2xl font-medium text-foreground leading-relaxed flex-1">
-                    {currentQ.text}
-                  </h3>
-                  <AudioPlayer 
-                    text={
-                      (currentQ.audioScript || currentQ.text) + 
-                      (currentQ.options && currentQ.options.length > 0 
-                        ? '. The options are: ' + currentQ.options.map((opt: string, i: number) => `Option ${String.fromCharCode(65 + i)}: ${opt}`).join('. ') 
-                        : '')
-                    } 
-                    buttonSize="default" 
-                    className="shrink-0" 
-                  />
+      <main className="flex-1 w-full px-4 md:px-6 py-5">
+        <div className="flex flex-col lg:flex-row gap-5 lg:items-stretch">
+          <aside className="lg:w-[35%] lg:min-w-[340px] lg:max-w-[35%]">
+            <Card className="shadow-sm border-border/60 h-full min-h-[560px]">
+              <CardContent className="p-5 md:p-6 h-full overflow-y-auto">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Rubric</div>
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    Question {currentIdx + 1} of {questions.length}
+                  </span>
                 </div>
-
-                {writingPayload ? (
-                  <div className="mb-8 space-y-4">
-                    <div className="p-5 bg-emerald-50/60 rounded-xl border border-emerald-200">
-                      <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2 block">
-                        Background Information
-                      </span>
-                      <p className="text-sm text-emerald-900 whitespace-pre-line">
-                        {writingPayload.backgroundInformation}
-                      </p>
+                <div className="mb-4">
+                  {rubricData ? (
+                    <div className="text-sm text-muted-foreground mt-1">
+                      Total Points: <span className="font-semibold text-foreground">{rubricData.totalPoints}</span>
                     </div>
-
-                    {Array.isArray(writingPayload.sources) && writingPayload.sources.length > 0 ? (
-                      <div className="p-5 bg-blue-50/50 rounded-xl border border-blue-100">
-                        <span className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3 block">
-                          Suggested Sources
-                        </span>
-                        <div className="space-y-3">
-                          {writingPayload.sources.map((source: any, idx: number) => (
-                            <div key={idx} className="rounded-lg bg-white border border-blue-100 p-3">
-                              <div className="font-semibold text-sm text-foreground">{source.title}</div>
-                              <div className="text-xs text-muted-foreground mb-1">
-                                {[source.author, source.year, source.type].filter(Boolean).join(' • ')}
-                              </div>
-                              <div className="text-sm text-gray-700">{source.description}</div>
-                            </div>
-                          ))}
+                  ) : (
+                    <div className="text-sm text-muted-foreground mt-1">No rubric available.</div>
+                  )}
+                </div>
+                {rubricData?.criteria?.length ? (
+                  <div className="space-y-3">
+                    {rubricData.criteria.map((criterion: any, idx: number) => (
+                      <div key={criterion.id || idx} className="rounded-xl border border-border bg-white p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="font-semibold text-sm text-foreground">{criterion.name}</div>
+                          <div className="text-xs font-bold text-primary whitespace-nowrap">{criterion.points} pts</div>
                         </div>
+                        {criterion.description ? (
+                          <div className="text-xs text-muted-foreground mt-1">{criterion.description}</div>
+                        ) : null}
                       </div>
-                    ) : null}
+                    ))}
                   </div>
                 ) : null}
-
-                {currentQ.options && currentQ.options.length > 0 && (
-                  <div className="space-y-3">
-                    {currentQ.options.map((opt: string, i: number) => {
-                      const isSelected = answers[currentQ.id] === opt;
-                      const isChecked = checkedAnswers[currentQ.id];
-                      const isCorrectAnswer = opt === currentQ.correctAnswer;
-
-                      let btnStateClass = 'border-border hover:border-primary/30 hover:bg-gray-50';
-                      let dotStateClass = 'bg-gray-100 text-gray-500';
-                      let textStateClass = 'text-gray-700';
-
-                      if (isChecked) {
-                        if (isCorrectAnswer) {
-                          btnStateClass = 'border-emerald-500 bg-emerald-50 shadow-md shadow-emerald-500/10';
-                          dotStateClass = 'bg-emerald-500 text-white';
-                          textStateClass = 'font-bold text-emerald-900';
-                        } else if (isSelected) {
-                          btnStateClass = 'border-red-500 bg-red-50';
-                          dotStateClass = 'bg-red-500 text-white';
-                          textStateClass = 'font-bold text-red-900';
-                        } else {
-                          btnStateClass = 'border-border opacity-50';
-                        }
-                      } else if (isSelected) {
-                        btnStateClass = 'border-primary bg-primary/5 shadow-md shadow-primary/10';
-                        dotStateClass = 'bg-primary text-white';
-                        textStateClass = 'font-medium text-primary';
-                      }
-
-                      return (
-                        <button
-                          key={i}
-                          onClick={() => handleAnswer(opt)}
-                          disabled={isChecked}
-                          className={`w-full text-left p-5 rounded-xl border-2 transition-all duration-200 flex items-center gap-4 ${btnStateClass}`}
-                        >
-                          <div className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center font-bold text-sm transition-colors ${dotStateClass}`}>
-                            {String.fromCharCode(65 + i)}
-                          </div>
-                          <span className={`text-lg ${textStateClass}`}>
-                            {opt}
-                          </span>
-                          {isChecked && isCorrectAnswer && <CheckCircle2 className="w-6 h-6 text-emerald-500 ml-auto shrink-0" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {['short_answer', 'essay', 'speaking', 'listening'].includes(currentQ.type) && (
-                  <textarea
-                    className="w-full h-40 p-5 rounded-xl border-2 border-border focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-lg resize-none disabled:opacity-75 disabled:bg-gray-50"
-                    placeholder={currentQ.type === 'speaking' ? "Type out what you would say..." : "Type your answer here..."}
-                    value={answers[currentQ.id] || ''}
-                    disabled={checkedAnswers[currentQ.id]}
-                    onChange={(e) => handleAnswer(e.target.value)}
-                  />
-                )}
-
-                {checkedAnswers[currentQ.id] && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-8 space-y-4">
-                    {currentQ.correctAnswer && (!currentQ.options || currentQ.options.length === 0) && (
-                      <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                        <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2 block">Rubric / Expected Answer</span>
-                        <p className="text-sm text-emerald-900 font-medium">{currentQ.correctAnswer}</p>
-                      </div>
-                    )}
-                    {currentQ.explanation && !writingPayload && (
-                      <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
-                        <span className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-1 block">Explanation</span>
-                        <p className="text-sm text-blue-900/80">{currentQ.explanation}</p>
-                      </div>
-                    )}
-                  </motion.div>
-                )}
               </CardContent>
             </Card>
-          </motion.div>
-        </AnimatePresence>
+          </aside>
 
-        {/* Navigation Footer */}
-        <div className="mt-8 flex flex-col gap-4">
-          <div className="flex justify-center border-b border-border pb-6 mb-2">
-            {!checkedAnswers[currentQ.id] && answers[currentQ.id] && (
-              <Button
-                onClick={handleCheck}
-                variant="outline"
-                className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-              >
-                Check Answer & Review
-              </Button>
-            )}
+          <section className="lg:w-[65%] lg:max-w-[65%] flex-1 min-w-0 flex flex-col">
+            <Card className="shadow-sm border-border/60 h-full min-h-[560px]">
+              <CardContent className="p-5 md:p-6 h-full overflow-y-auto">
+                <div className="mb-4 p-4 md:p-5 rounded-xl border border-border bg-white">
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="text-2xl font-medium text-foreground leading-relaxed flex-1">
+                      {currentQ.text}
+                    </h3>
+                    <AudioPlayer
+                      text={
+                        (currentQ.audioScript || currentQ.text) +
+                        (currentQ.options && currentQ.options.length > 0
+                          ? '. The options are: ' + currentQ.options.map((opt: string, i: number) => `Option ${String.fromCharCode(65 + i)}: ${opt}`).join('. ')
+                          : '')
+                      }
+                      buttonSize="sm"
+                      iconOnly
+                      className="h-8 w-8 p-0 shrink-0"
+                    />
+                  </div>
+                </div>
+
+            {writingPayload ? (
+              <div className="mb-4 space-y-3">
+                <div className="p-4 bg-emerald-50/60 rounded-xl border border-emerald-200">
+                  <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2 block">
+                    Background Information
+                  </span>
+                  <div className="text-sm text-emerald-900 whitespace-pre-line max-h-48 overflow-y-auto pr-1">
+                    {writingPayload.backgroundInformation}
+                  </div>
+                </div>
+
+                {Array.isArray(writingPayload.sources) && writingPayload.sources.length > 0 ? (
+                  <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                    <span className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3 block">
+                      Suggested Sources
+                    </span>
+                    <div className="mb-3 overflow-x-auto pb-1">
+                      <div className="inline-flex gap-2 min-w-full">
+                        {writingPayload.sources.map((source: any, idx: number) => {
+                          const active = idx === selectedSourceIdx;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setSelectedSourceIdx(idx)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-semibold border whitespace-nowrap transition-colors ${
+                                active
+                                  ? 'bg-primary text-primary-foreground border-primary'
+                                  : 'bg-white text-muted-foreground border-blue-200 hover:border-primary/40 hover:text-foreground'
+                              }`}
+                            >
+                              Source {idx + 1}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-white border border-blue-100 p-3">
+                      {(() => {
+                        const source =
+                          writingPayload.sources[
+                            Math.min(selectedSourceIdx, writingPayload.sources.length - 1)
+                          ];
+                        if (!source) return null;
+                        return (
+                          <>
+                            <div className="font-semibold text-sm text-foreground">{source.title}</div>
+                            <div className="text-xs text-muted-foreground mb-1">
+                              {[source.author, source.year, source.type].filter(Boolean).join(' • ')}
+                            </div>
+                            <div className="text-sm text-gray-700">{source.description}</div>
+                            {source.url ? (
+                              <a
+                                href={source.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block mt-2 text-xs font-semibold text-primary hover:underline"
+                              >
+                                Open source link
+                              </a>
+                            ) : null}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+              </CardContent>
+            </Card>
+          </section>
+        </div>
+        {['short_answer', 'essay', 'speaking', 'listening'].includes(currentQ.type) && (
+          <div className="mt-5">
+            <textarea
+              className="w-full h-44 p-5 rounded-xl border-2 border-border focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-lg resize-none disabled:opacity-75 disabled:bg-gray-50"
+              placeholder={currentQ.type === 'speaking' ? "Type out what you would say..." : "Type your answer here..."}
+              value={answers[currentQ.id] || ''}
+              disabled={checkedAnswers[currentQ.id]}
+              onChange={(e) => handleAnswer(e.target.value)}
+            />
           </div>
+        )}
+        <div className="mt-4 flex justify-between items-center">
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => setCurrentIdx(p => p - 1)}
+            disabled={currentIdx === 0}
+          >
+            <ChevronLeft className="w-5 h-5 mr-2" /> Previous
+          </Button>
 
-          <div className="flex justify-between items-center">
+          {currentIdx === questions.length - 1 ? (
             <Button
-              variant="outline"
               size="lg"
-              onClick={() => setCurrentIdx(p => p - 1)}
-              disabled={currentIdx === 0}
+              variant="accent"
+              onClick={handleSubmit}
+              disabled={submitMutation.isPending}
+              className="px-10"
             >
-              <ChevronLeft className="w-5 h-5 mr-2" /> Previous
+              {submitMutation.isPending ? "Submitting..." : "Submit Assessment"} <CheckCircle2 className="w-5 h-5 ml-2" />
             </Button>
-
-            {currentIdx === questions.length - 1 ? (
-              <Button
-                size="lg"
-                variant="accent"
-                onClick={handleSubmit}
-                disabled={submitMutation.isPending}
-                className="px-10"
-              >
-                {submitMutation.isPending ? "Submitting..." : "Submit Assessment"} <CheckCircle2 className="w-5 h-5 ml-2" />
-              </Button>
-            ) : (
-              <Button
-                size="lg"
-                onClick={() => setCurrentIdx(p => p + 1)}
-              >
-                Next Question <ChevronRight className="w-5 h-5 ml-2" />
-              </Button>
-            )}
-          </div>
+          ) : (
+            <Button
+              size="lg"
+              onClick={() => setCurrentIdx(p => p + 1)}
+            >
+              Next Question <ChevronRight className="w-5 h-5 ml-2" />
+            </Button>
+          )}
         </div>
       </main>
     </div>

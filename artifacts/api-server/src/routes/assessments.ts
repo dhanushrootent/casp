@@ -49,7 +49,26 @@ router.get("/assessments/:assessmentId", async (req: Request, res: Response) => 
   const questions = await db.select().from(questionsTable).where(eq(questionsTable.assessmentId, assessmentId as string));
   questions.sort((a, b) => a.orderIndex - b.orderIndex);
 
-  return res.json({ ...assessment, questions });
+  let rubric: unknown = null;
+  let rubricParams: unknown = null;
+
+  // Writing assessments persist rubric metadata in the essay question explanation payload.
+  const rubricSourceQuestion = questions.find((q) => q.type === "essay") ?? questions[0];
+  if (rubricSourceQuestion?.explanation) {
+    try {
+      const payload = JSON.parse(rubricSourceQuestion.explanation) as {
+        rubric?: unknown;
+        rubricParams?: unknown;
+      };
+      rubric = payload.rubric ?? null;
+      rubricParams = payload.rubricParams ?? null;
+    } catch {
+      rubric = null;
+      rubricParams = null;
+    }
+  }
+
+  return res.json({ ...assessment, questions, rubric, rubricParams });
 });
 
 router.get("/assessments/:assessmentId/questions", async (req: Request, res: Response) => {
