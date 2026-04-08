@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useRoute } from 'wouter';
 import { Button, Card, CardContent } from '@/components/ui';
-import { Clock, ChevronRight, ChevronLeft, CheckCircle2 } from 'lucide-react';
+import { Clock, ChevronRight, ChevronLeft, CheckCircle2, Sparkles, Loader2 } from 'lucide-react';
 import { formatTime } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AudioPlayer } from '@/components/ui/audio-player';
+import { WritingRubricGradeView } from '@/components/teacher/WritingRubricGradeView';
 
-import { useGetAssessment, getGetAssessmentQueryKey, useSubmitResult } from '@workspace/api-client-react';
+import { useGetAssessment, getGetAssessmentQueryKey, useSubmitResult, useGetResult, getGetResultQueryKey } from '@workspace/api-client-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 
@@ -16,6 +17,23 @@ function parseWritingActivityPayload(explanation?: string | null) {
     const parsed = JSON.parse(explanation);
     if (parsed && typeof parsed === 'object' && parsed.kind === 'writing_activity_v1') {
       return parsed as any;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredFeedback(feedback: unknown): any | null {
+  if (typeof feedback !== 'string' || feedback.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(feedback);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      (parsed.kind === 'ai_writing_result_v1' || parsed.kind === 'student_performance_v1')
+    ) {
+      return parsed;
     }
     return null;
   } catch {
@@ -45,6 +63,12 @@ export default function AssessmentTake() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [resultId, setResultId] = useState<string | null>(null);
   const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
+  const { data: submittedResult, isLoading: isLoadingSubmittedResult } = useGetResult(resultId || '', {
+    query: {
+      queryKey: getGetResultQueryKey(resultId || ''),
+      enabled: Boolean(resultId),
+    },
+  });
 
   // Initialize time remaining when assessment loads
   useEffect(() => {
@@ -125,25 +149,107 @@ export default function AssessmentTake() {
   }
 
   if (isSubmitted) {
+    const storedFeedback = parseStoredFeedback((submittedResult as any)?.feedback);
+    const writingFeedback = storedFeedback?.kind === 'ai_writing_result_v1' ? storedFeedback : null;
+    const summary =
+      typeof storedFeedback?.summary === 'string'
+        ? storedFeedback.summary
+        : (typeof (submittedResult as any)?.feedback === 'string' ? (submittedResult as any).feedback : 'Your result has been recorded.');
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-lg text-center p-8 border-0 shadow-2xl">
-          <div className="w-20 h-20 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle2 className="w-10 h-10" />
-          </div>
-          <h2 className="text-3xl font-display font-bold mb-4">Assessment Complete!</h2>
-          <p className="text-muted-foreground text-lg mb-8">Your answers have been securely submitted. Great job completing {assessment.title}.</p>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <Button variant="outline" size="lg" className="w-full" onClick={() => window.location.href = '/student/dashboard'}>
-              Return to Dashboard
-            </Button>
-            {resultId && (
-              <Button size="lg" className="w-full" onClick={() => window.location.href = `/student/results`}>
-                View Results & Feedback
+      <div className="min-h-screen bg-gray-50 p-4 md:p-6">
+        <div className="max-w-6xl mx-auto space-y-4">
+          <Card className="border-border/60 shadow-sm">
+            <CardContent className="p-5 md:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                  <CheckCircle2 className="w-7 h-7" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-display font-bold">Assessment Complete!</h2>
+                  <p className="text-sm text-muted-foreground">Great job completing {assessment.title}.</p>
+                </div>
+              </div>
+              <Button variant="outline" onClick={() => window.location.href = '/student/dashboard'}>
+                Return to Dashboard
               </Button>
-            )}
-          </div>
-        </Card>
+            </CardContent>
+          </Card>
+
+          {isLoadingSubmittedResult ? (
+            <Card className="border-border/60">
+              <CardContent className="p-6 flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading detailed result...
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-border/60 shadow-sm">
+              <CardContent className="p-5 md:p-6 space-y-5">
+                <div className="bg-blue-50/60 p-4 rounded-xl border border-blue-100">
+                  <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" /> AI Feedback
+                  </h5>
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{summary}</p>
+                </div>
+
+                {writingFeedback?.questions?.map((item: any, itemIdx: number) => {
+                  const grading = item?.grading;
+                  if (!grading) return null;
+                  return (
+                    <div key={item.questionId || itemIdx} className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-semibold text-slate-900">Writing Feedback</div>
+                        <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                          {grading.totalScore}/{grading.maxScore} ({Math.round(grading.percentage || 0)}%)
+                        </span>
+                      </div>
+                      <WritingRubricGradeView rubric={item.rubric} grading={grading} />
+                    </div>
+                  );
+                })}
+
+                <div className="space-y-3">
+                  <h5 className="text-sm font-bold text-slate-800">Submitted Answers</h5>
+                  {Array.isArray((submittedResult as any)?.answers) && (submittedResult as any).answers.length > 0 ? (
+                    (submittedResult as any).answers.map((q: any, qIdx: number) => (
+                      <div key={qIdx} className={`p-3 rounded-lg border-l-4 text-sm ${
+                        q.isCorrect === true
+                          ? 'bg-emerald-50/50 border-emerald-400'
+                          : q.isCorrect === false
+                            ? 'bg-red-50/50 border-red-400'
+                            : 'bg-slate-50 border-slate-300'
+                      }`}>
+                        <div className="flex gap-2 mb-2">
+                          <span className="font-semibold shrink-0">Q{qIdx + 1}:</span>
+                          <span className="text-slate-700">{q.questionText || "Unknown Question"}</span>
+                        </div>
+                        <div className="mt-2 space-y-3">
+                          <div>
+                            <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Student Answer:</span>
+                            <div className={`font-medium whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto pr-1 ${
+                              q.isCorrect === true ? 'text-emerald-700' : q.isCorrect === false ? 'text-red-700' : 'text-slate-700'
+                            }`}>
+                              {q.answer || "No Answer"}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Correct Answer:</span>
+                            <span className={`font-medium ${q.correctAnswer ? 'text-emerald-700' : 'text-slate-600'}`}>
+                              {q.correctAnswer || "Subjective"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-slate-500 italic p-4 bg-slate-50 rounded-lg border border-slate-100">
+                      No answered questions recorded.
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       </div>
     );
   }

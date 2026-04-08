@@ -117,6 +117,12 @@ export function WritingRubricGradeView({ rubric, grading, className = "" }: Prop
           {rows.map(({ key, criterion, cs, maxPts, sc, perf }) => {
             const quotes = Array.isArray(cs?.quotes) ? cs!.quotes!.filter((q) => typeof q === "string" && q.trim().length > 0) : [];
             const note = typeof cs?.feedback === "string" ? cs.feedback.trim() : "";
+            const notePoints = note
+              ? note
+                  .split(/\n+/)
+                  .map((line) => line.replace(/^[\s\-*•\d.)]+/, "").trim())
+                  .filter((line) => line.length > 0)
+              : [];
             const hasJustification = quotes.length > 0 || note.length > 0;
 
             return (
@@ -191,7 +197,15 @@ export function WritingRubricGradeView({ rubric, grading, className = "" }: Prop
                                 <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-blue-700">
                                   AI rationale
                                 </span>
-                                <p className="whitespace-pre-wrap leading-relaxed">{note}</p>
+                                {notePoints.length > 1 ? (
+                                  <ul className="list-disc pl-4 space-y-1 leading-relaxed">
+                                    {notePoints.map((point, pointIdx) => (
+                                      <li key={pointIdx}>{point}</li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="whitespace-pre-wrap leading-relaxed">{note}</p>
+                                )}
                               </div>
                             ) : null}
                           </>

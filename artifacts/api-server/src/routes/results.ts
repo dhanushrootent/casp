@@ -20,6 +20,130 @@ function parseWritingActivityPayload(explanation: string | null | undefined): an
   }
 }
 
+async function generateMentorInsights(params: {
+  studentName: string;
+  performanceBrief: unknown;
+}) {
+  const prompt = `You are an AI Education Mentor. Analyze the following student performance data and provide a concise (max 150 words) detailed explanation for their teacher.
+Student Name: ${params.studentName}
+Performance History (Contains both right and wrong answers to help gauge strengths and weaknesses): ${JSON.stringify(params.performanceBrief)}
+
+TASK:
+1. Identify specific academic concepts or skills the student is consistently getting WRONG (weaknesses).
+2. Identify specific academic concepts or skills the student is getting RIGHT (strengths).
+3. Explain WHY they might be struggling based on the incorrect answers.
+4. Provide actionable training recommendations for the teacher to help this student improve.
+
+FORMAT: Provide a professional, encouraging analysis in plain text. No markdown formatting.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: { maxOutputTokens: 2000 },
+    });
+    return response.text || "Insight generation failed.";
+  } catch (e: any) {
+    console.error("AI Insights Error:", e?.message || e);
+    if (e?.message?.includes("429") || e?.message?.includes("Quota") || e?.message?.includes("exhausted")) {
+      return "Unable to generate insights: The Gemini API key has exceeded its rate limit or free tier quota. Please try again later or check your Google Cloud Console billing.";
+    }
+    return "Unable to generate insights at this moment due to a connection issue.";
+  }
+}
+
+async function generateSummaryFromScore(params: {
+  studentName: string;
+  percentage: number;
+  passed: boolean;
+  strengthAreas: string[];
+  improvementAreas: string[];
+}) {
+  const prompt = `You are an AI education coach.
+Create exactly ONE concise summary sentence (max 30 words) for a teacher dashboard.
+
+Student: ${params.studentName}
+Score Percentage: ${Math.round(params.percentage)}
+Passed: ${params.passed}
+Strength Areas: ${params.strengthAreas.join(", ") || "None"}
+Improvement Areas: ${params.improvementAreas.join(", ") || "None"}
+
+Rules:
+- Keep it professional, encouraging, and specific.
+- Mention score context and one focus recommendation.
+- Return plain text only (no markdown, no labels).`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: { maxOutputTokens: 120 },
+    });
+    const text = (response.text || "").trim();
+    if (text.length > 0) return text;
+  } catch (e: any) {
+    console.error("AI Summary Error:", e?.message || e);
+  }
+
+  // Fallback if AI call fails/unavailable.
+  if (params.percentage < 60) {
+    return "The student is below proficiency and should focus on core concept review with targeted practice in weak skill areas.";
+  }
+  if (params.percentage < 80) {
+    return "The student shows developing proficiency; reinforce evidence quality and consistency to move from approaching to strong mastery.";
+  }
+  return "The student demonstrates strong proficiency; continue extension tasks that deepen analysis while maintaining current strengths.";
+}
+
+function parseStoredPerformancePayload(feedback: unknown): {
+  detailedTranscript?: any[];
+} | null {
+  if (typeof feedback !== "string" || feedback.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(feedback);
+    if (!parsed || typeof parsed !== "object") return null;
+    const p = parsed as any;
+    if (p.kind === "student_performance_v1" || p.kind === "ai_writing_result_v1") {
+      return {
+        detailedTranscript: Array.isArray(p.detailedTranscript) ? p.detailedTranscript : undefined,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function computeSkillAreasFromTranscript(
+  transcript: Array<{ score?: number; answeredQuestions?: Array<{ skill?: string; isCorrect?: boolean | null }> }>,
+) {
+  const skillStats: Record<string, { total: number; correct: number }> = {};
+  for (const item of transcript) {
+    const score = Number(item?.score) || 0;
+    const answered = Array.isArray(item?.answeredQuestions) ? item.answeredQuestions : [];
+    for (const aq of answered) {
+      if (!aq?.skill) continue;
+      if (!skillStats[aq.skill]) skillStats[aq.skill] = { total: 0, correct: 0 };
+      skillStats[aq.skill].total++;
+      if (aq.isCorrect === true) {
+        skillStats[aq.skill].correct++;
+      } else if (aq.isCorrect === null && score >= 70) {
+        // Proxy for rubric/open-ended items where binary correctness is unavailable.
+        skillStats[aq.skill].correct++;
+      }
+    }
+  }
+
+  const skillAverages = Object.entries(skillStats).map(([skill, stats]) => ({
+    skill,
+    percent: (stats.correct / stats.total) * 100,
+  }));
+  return {
+    strengthAreas: skillAverages.filter((s) => s.percent >= 75).map((s) => s.skill),
+    improvementAreas: skillAverages.filter((s) => s.percent < 60).map((s) => s.skill),
+  };
+}
+
 async function gradeWritingAnswer(params: {
   studentResponse: string;
   writingPrompt: string;
@@ -207,20 +331,55 @@ router.get("/results", async (req: Request, res: Response) => {
 
 router.post("/results", async (req: Request, res: Response) => {
   const { assessmentId, studentId, answers, timeSpent } = req.body;
+  console.log("[POST /api/results] start", {
+    assessmentId,
+    studentId,
+    answersCount: Array.isArray(answers) ? answers.length : 0,
+    timeSpent,
+  });
 
   const assessments = await db.select().from(assessmentsTable).where(eq(assessmentsTable.id, assessmentId)).limit(1);
   const assessment = assessments[0];
   if (!assessment) {
+    console.log("[POST /api/results] assessment not found", { assessmentId });
     return res.status(404).json({ error: "not_found", message: "Assessment not found" });
   }
+  console.log("[POST /api/results] assessment loaded", {
+    assessmentId: assessment.id,
+    title: assessment.title,
+    type: assessment.type,
+    grade: assessment.grade,
+    subject: assessment.subject,
+  });
 
   const questions = await db.select().from(questionsTable).where(eq(questionsTable.assessmentId, assessmentId));
   const questionMap = Object.fromEntries(questions.map(q => [q.id, q]));
+  console.log("[POST /api/results] questions loaded", { questionCount: questions.length });
+
+  const students = await db.select().from(usersTable).where(eq(usersTable.id, studentId)).limit(1);
+  const student = students[0];
+  if (!student) {
+    console.log("[POST /api/results] student not found", { studentId });
+    return res.status(404).json({ error: "not_found", message: "Student not found" });
+  }
+  console.log("[POST /api/results] student loaded", {
+    studentId: student.id,
+    studentName: student.name,
+    grade: student.grade,
+  });
 
   let score = 0;
   let maxScore = 0;
 
   const answerFeedback: Array<{ questionId: string; grading?: unknown; rubric?: unknown }> = [];
+  const performanceAnswers: Array<{
+    questionId: string;
+    text?: string;
+    skill?: string | null;
+    studentAnswer?: string;
+    correctAnswer?: string | null;
+    isCorrect: boolean | null;
+  }> = [];
 
   for (const question of questions) {
     const pts = Number(question.points) || 0;
@@ -228,6 +387,14 @@ router.post("/results", async (req: Request, res: Response) => {
     const submitted = answers.find((a: { questionId: string; answer: string }) => a.questionId === question.id);
     if (submitted && question.correctAnswer && submitted.answer === question.correctAnswer) {
       score += pts;
+      performanceAnswers.push({
+        questionId: question.id,
+        text: question.text,
+        skill: question.skill,
+        studentAnswer: submitted.answer,
+        correctAnswer: question.correctAnswer,
+        isCorrect: true,
+      });
     } else if (submitted && question.type === "essay") {
       const writingPayload = parseWritingActivityPayload(question.explanation);
       if (writingPayload) {
@@ -250,36 +417,221 @@ router.post("/results", async (req: Request, res: Response) => {
             grading,
             rubric: writingPayload.rubric ?? {},
           });
+          performanceAnswers.push({
+            questionId: question.id,
+            text: question.text,
+            skill: question.skill,
+            studentAnswer: submitted.answer,
+            correctAnswer: question.correctAnswer,
+            isCorrect: null,
+          });
         } catch (error) {
           console.error("[POST /api/results] Failed AI grade for essay:", error);
           score += pts * 0.5;
+          performanceAnswers.push({
+            questionId: question.id,
+            text: question.text,
+            skill: question.skill,
+            studentAnswer: submitted.answer,
+            correctAnswer: question.correctAnswer,
+            isCorrect: null,
+          });
         }
       } else {
         score += pts * 0.5;
+        performanceAnswers.push({
+          questionId: question.id,
+          text: question.text,
+          skill: question.skill,
+          studentAnswer: submitted.answer,
+          correctAnswer: question.correctAnswer,
+          isCorrect: null,
+        });
       }
+    } else if (submitted) {
+      performanceAnswers.push({
+        questionId: question.id,
+        text: question.text,
+        skill: question.skill,
+        studentAnswer: submitted.answer,
+        correctAnswer: question.correctAnswer,
+        isCorrect: question.correctAnswer ? submitted.answer === question.correctAnswer : null,
+      });
     }
   }
+  console.log("[POST /api/results] scoring complete", {
+    rawScore: score,
+    maxScore,
+    answeredTracked: performanceAnswers.length,
+    writingFeedbackCount: answerFeedback.length,
+  });
 
   const percentage = maxScore > 0 ? (score / maxScore) * 100 : 0;
   const passed = percentage >= 60;
   const safeTimeSpent = Number(timeSpent) || 0;
+  console.log("[POST /api/results] normalized score", {
+    percentage,
+    passed,
+    safeTimeSpent,
+  });
 
-  let feedback = "Great job!";
-  if (percentage < 60) {
-    feedback = "You should focus on reviewing the core concepts, specifically the reading and writing rubrics covered in this assessment.";
-  } else if (percentage < 80) {
-    feedback = "Good work. Focus on citing more specific evidence in the future to improve your score further.";
+  const id = uuidv4();
+  const currentPerformanceEntry = {
+    resultId: id,
+    testTitle: assessment.title,
+    score: percentage,
+    feedback: "",
+    answeredQuestions: performanceAnswers,
+  };
+
+  const previousResults = await db
+    .select()
+    .from(resultsTable)
+    .where(eq(resultsTable.studentId, studentId))
+    .orderBy(desc(resultsTable.completedAt));
+  console.log("[POST /api/results] previous results fetched", { previousResultCount: previousResults.length });
+
+  // Rebuild the same rich context we previously used in analytics (historical right/wrong patterns).
+  const combinedResults: Array<{
+    id: string;
+    assessmentId: string;
+    percentage: number;
+    feedback: string;
+    answers: Array<{ questionId: string; answer: string }>;
+  }> = [
+    ...previousResults.map((r) => ({
+      id: r.id,
+      assessmentId: r.assessmentId,
+      percentage: Number(r.percentage) || 0,
+      feedback: typeof r.feedback === "string" ? r.feedback : "",
+      answers: Array.isArray(r.answers) ? (r.answers as Array<{ questionId: string; answer: string }>) : [],
+    })),
+    {
+      id,
+      assessmentId,
+      percentage,
+      feedback: "",
+      answers: Array.isArray(answers) ? answers : [],
+    },
+  ];
+
+  const combinedAssessmentIds = Array.from(new Set(combinedResults.map((r) => r.assessmentId)));
+  const combinedAssessments =
+    combinedAssessmentIds.length > 0
+      ? await db
+          .select()
+          .from(assessmentsTable)
+          .where(inArray(assessmentsTable.id, combinedAssessmentIds))
+      : [];
+  const combinedAssessmentMap = Object.fromEntries(combinedAssessments.map((a) => [a.id, a]));
+
+  const combinedQuestionIds = Array.from(
+    new Set(combinedResults.flatMap((r) => r.answers.map((a) => a.questionId))),
+  );
+  const combinedQuestions =
+    combinedQuestionIds.length > 0
+      ? await db
+          .select()
+          .from(questionsTable)
+          .where(inArray(questionsTable.id, combinedQuestionIds))
+      : [];
+  const combinedQuestionMap = Object.fromEntries(combinedQuestions.map((q) => [q.id, q]));
+
+  const skillStats: Record<string, { total: number; correct: number }> = {};
+  for (const r of combinedResults) {
+    for (const a of r.answers) {
+      const q = combinedQuestionMap[a.questionId];
+      if (!q || !q.skill) continue;
+      if (!skillStats[q.skill]) skillStats[q.skill] = { total: 0, correct: 0 };
+      skillStats[q.skill].total++;
+      if (q.correctAnswer && a.answer === q.correctAnswer) {
+        skillStats[q.skill].correct++;
+      } else if (q.type === "short_answer" || q.type === "essay" || q.type === "speaking") {
+        if (r.percentage >= 70) skillStats[q.skill].correct++;
+      }
+    }
   }
+  const skillAverages = Object.entries(skillStats).map(([skill, stats]) => ({
+    skill,
+    percent: (stats.correct / stats.total) * 100,
+  }));
+  const strengthAreas = skillAverages.filter((s) => s.percent >= 75).map((s) => s.skill);
+  const improvementAreas = skillAverages.filter((s) => s.percent < 60).map((s) => s.skill);
+  const summary = await generateSummaryFromScore({
+    studentName: student.name,
+    percentage,
+    passed,
+    strengthAreas,
+    improvementAreas,
+  });
+  currentPerformanceEntry.feedback = summary;
+
+  const performanceBrief = combinedResults.map((r) => {
+    const answeredQuestions = r.answers.map((a) => {
+      const q = combinedQuestionMap[a.questionId];
+      const isCorrect = q && q.correctAnswer ? a.answer === q.correctAnswer : null;
+      return {
+        text: q?.text,
+        skill: q?.skill,
+        studentAnswer: a.answer,
+        correctAnswer: q?.correctAnswer,
+        isCorrect,
+      };
+    });
+    return {
+      resultId: r.id,
+      testTitle: combinedAssessmentMap[r.assessmentId]?.title ?? "Unknown",
+      score: r.percentage,
+      feedback: r.feedback,
+      answeredQuestions,
+    };
+  });
+  console.log("[POST /api/results] performance brief built", {
+    combinedTranscriptCount: performanceBrief.length,
+    combinedQuestionCount: combinedQuestions.length,
+    strengthAreas,
+    improvementAreas,
+  });
+
+  const mentorInsights = await generateMentorInsights({
+    studentName: student.name,
+    performanceBrief,
+  });
+  console.log("[POST /api/results] mentor insights generated", {
+    mentorInsightsLength: typeof mentorInsights === "string" ? mentorInsights.length : 0,
+  });
+
+  let feedback = JSON.stringify({
+    kind: "student_performance_v1",
+    summary,
+    mentorInsights,
+    strengthAreas,
+    improvementAreas,
+    detailedTranscript: performanceBrief,
+  });
 
   if (answerFeedback.length > 0) {
     feedback = JSON.stringify({
       kind: "ai_writing_result_v1",
-      summary: feedback,
+      summary,
       questions: answerFeedback,
+      mentorInsights,
+      strengthAreas,
+      improvementAreas,
+      detailedTranscript: performanceBrief,
     });
   }
+  const detailedTranscriptWithCurrentFeedback = performanceBrief.map((entry: any) =>
+    entry?.resultId === id ? { ...entry, feedback } : entry,
+  );
+  feedback = JSON.stringify({
+    ...(JSON.parse(feedback) as any),
+    detailedTranscript: detailedTranscriptWithCurrentFeedback,
+  });
+  console.log("[POST /api/results] feedback payload prepared", {
+    kind: answerFeedback.length > 0 ? "ai_writing_result_v1" : "student_performance_v1",
+  });
 
-  const id = uuidv4();
   const [result] = await db.insert(resultsTable).values({
     id,
     assessmentId,
@@ -292,6 +644,12 @@ router.post("/results", async (req: Request, res: Response) => {
     answers,
     feedback,
   }).returning();
+  console.log("[POST /api/results] result persisted", {
+    resultId: result.id,
+    assessmentId: result.assessmentId,
+    studentId: result.studentId,
+    percentage: result.percentage,
+  });
 
   return res.status(201).json({
     id: result.id,
@@ -406,11 +764,30 @@ ${JSON.stringify(answerDetails, null, 2)}`;
 
     const aiFeedback = response.text || "Could not generate insights.";
 
+    let nextFeedback: string = aiFeedback;
+    if (typeof result.feedback === "string" && result.feedback.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(result.feedback) as any;
+        if (parsed && typeof parsed === "object") {
+          if (parsed.kind === "ai_writing_result_v1" || parsed.kind === "student_performance_v1") {
+            const updated = {
+              ...parsed,
+              mentorInsights: aiFeedback,
+              summary: typeof parsed.summary === "string" ? parsed.summary : aiFeedback,
+            };
+            nextFeedback = JSON.stringify(updated);
+          }
+        }
+      } catch {
+        // keep plain text fallback in nextFeedback
+      }
+    }
+
     await db.update(resultsTable)
-      .set({ feedback: aiFeedback })
+      .set({ feedback: nextFeedback })
       .where(eq(resultsTable.id, resultId as string));
 
-    return res.json({ feedback: aiFeedback });
+    return res.json({ feedback: nextFeedback });
   } catch (error) {
     console.error("Failed to generate AI insights:", error);
     return res.status(500).json({ error: "ai_error", message: "Failed to generate AI insights" });

@@ -1,10 +1,37 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
-import { resultsTable, assessmentsTable, usersTable, questionsTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
-import { ai } from "@workspace/integrations-gemini-ai";
+import { resultsTable, assessmentsTable, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const router: IRouter = Router();
+
+function parseStoredPerformance(feedback: unknown): {
+  mentorInsights?: string;
+  strengthAreas?: string[];
+  improvementAreas?: string[];
+  detailedTranscript?: any[];
+} | null {
+  if (typeof feedback !== "string" || feedback.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(feedback);
+    if (!parsed || typeof parsed !== "object") return null;
+    const p = parsed as any;
+    if (
+      p.kind === "student_performance_v1" ||
+      p.kind === "ai_writing_result_v1"
+    ) {
+      return {
+        mentorInsights: typeof p.mentorInsights === "string" ? p.mentorInsights : undefined,
+        strengthAreas: Array.isArray(p.strengthAreas) ? p.strengthAreas : undefined,
+        improvementAreas: Array.isArray(p.improvementAreas) ? p.improvementAreas : undefined,
+        detailedTranscript: Array.isArray(p.detailedTranscript) ? p.detailedTranscript : undefined,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 router.get("/analytics/overview", async (req: Request, res: Response) => {
   const { assessmentType } = req.query;
@@ -110,16 +137,26 @@ router.get("/analytics/overview", async (req: Request, res: Response) => {
 
 router.get("/analytics/student/:studentId", async (req: Request, res: Response) => {
   const { studentId } = req.params;
+  console.log("[GET /api/analytics/student/:studentId] start", { studentId });
 
   const students = await db.select().from(usersTable).where(eq(usersTable.id, studentId as string)).limit(1);
   const student = students[0];
   if (!student) {
+    console.log("[GET /api/analytics/student/:studentId] student not found", { studentId });
     return res.status(404).json({ error: "not_found", message: "Student not found" });
   }
+  console.log("[GET /api/analytics/student/:studentId] student loaded", {
+    studentId: student.id,
+    studentName: student.name,
+  });
 
   const results = await db.select().from(resultsTable).where(eq(resultsTable.studentId, studentId as string));
   const assessments = await db.select().from(assessmentsTable);
   const assessmentMap = Object.fromEntries(assessments.map(a => [a.id, a]));
+  console.log("[GET /api/analytics/student/:studentId] data loaded", {
+    resultsCount: results.length,
+    assessmentsCount: assessments.length,
+  });
 
   const avgScore = results.length > 0 ? results.reduce((s, r) => s + r.percentage, 0) / results.length : 0;
   const passRate = results.length > 0 ? (results.filter(r => r.passed).length / results.length) * 100 : 0;
@@ -158,96 +195,41 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
     subjectScores[subject].push(r.percentage);
   }
 
-  // Define strength/improvement at the skill (concept) level
   let strengthAreas: string[] = [];
   let improvementAreas: string[] = [];
-  let mentorInsights = "Gemini is analyzing the performance data...";
+  let mentorInsights = "No stored performance insight available yet.";
   let performanceBrief: any[] = [];
 
-  if (results.length > 0) {
-    const questionIds = Array.from(new Set(results.flatMap(r => r.answers.map(a => a.questionId))));
-    const questions = questionIds.length > 0
-      ? await db.select().from(questionsTable).where(inArray(questionsTable.id, questionIds))
-      : [];
-    const questionMap = Object.fromEntries(questions.map(q => [q.id, q]));
-
-    // Calculate skill-based averages
-    const skillStats: Record<string, { total: number; correct: number }> = {};
-    for (const r of results) {
-      for (const a of r.answers) {
-        const q = questionMap[a.questionId];
-        if (!q || !q.skill) continue;
-        if (!skillStats[q.skill]) skillStats[q.skill] = { total: 0, correct: 0 };
-        skillStats[q.skill].total++;
-        if (q.correctAnswer && a.answer === q.correctAnswer) {
-          skillStats[q.skill].correct++;
-        } else if (q.type === 'short_answer' || q.type === 'essay' || q.type === 'speaking') {
-          // For non-MC questions, assume "some partial credit" if test score was high or exclude
-          // For now, simpler: use result percentage as proxy if skill is present
-          if (r.percentage >= 70) skillStats[q.skill].correct++;
-        }
-      }
-    }
-
-    const skillAverages = Object.entries(skillStats).map(([skill, stats]) => ({
-      skill,
-      percent: (stats.correct / stats.total) * 100
-    }));
-
-    strengthAreas = skillAverages.filter(s => s.percent >= 75).map(s => s.skill);
-    improvementAreas = skillAverages.filter(s => s.percent < 60).map(s => s.skill);
-
-    // AI Mentor Insights Generation
-    performanceBrief = results.map(r => {
-      const answeredQuestions = r.answers.map(a => {
-        const q = questionMap[a.questionId];
-        const isCorrect = q && q.correctAnswer ? (a.answer === q.correctAnswer) : null;
-        return {
-          text: q?.text,
-          skill: q?.skill,
-          studentAnswer: a.answer,
-          correctAnswer: q?.correctAnswer,
-          isCorrect
-        };
-      });
-
-      return {
-        resultId: r.id,
-        testTitle: assessmentMap[r.assessmentId]?.title,
-        score: r.percentage,
-        feedback: r.feedback,
-        answeredQuestions
-      };
+  const latestByCompletedAt = [...results].sort(
+    (a, b) => b.completedAt.getTime() - a.completedAt.getTime(),
+  );
+  for (const r of latestByCompletedAt) {
+    const stored = parseStoredPerformance(r.feedback);
+    if (!stored) continue;
+    strengthAreas = stored.strengthAreas ?? [];
+    improvementAreas = stored.improvementAreas ?? [];
+    mentorInsights = stored.mentorInsights ?? mentorInsights;
+    performanceBrief = stored.detailedTranscript ?? [];
+    console.log("[GET /api/analytics/student/:studentId] using stored performance", {
+      sourceResultId: r.id,
+      hasMentorInsights: typeof stored.mentorInsights === "string" && stored.mentorInsights.length > 0,
+      strengthAreasCount: strengthAreas.length,
+      improvementAreasCount: improvementAreas.length,
+      transcriptCount: performanceBrief.length,
     });
-
-    const prompt = `You are an AI Education Mentor. Analyze the following student performance data and provide a concise (max 150 words) detailed explanation for their teacher.
-    Student Name: ${student.name}
-    Performance History (Contains both right and wrong answers to help gauge strengths and weaknesses): ${JSON.stringify(performanceBrief)}
-
-    TASK:
-    1. Identify specific academic concepts or skills the student is consistently getting WRONG (weaknesses).
-    2. Identify specific academic concepts or skills the student is getting RIGHT (strengths).
-    3. Explain WHY they might be struggling based on the incorrect answers.
-    4. Provide actionable training recommendations for the teacher to help this student improve.
-
-    FORMAT: Provide a professional, encouraging analysis in plain text. No markdown formatting.`;
-
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-      });
-      mentorInsights = response.text || "Insight generation failed.";
-    } catch (e: any) {
-      console.error("AI Insights Error:", e?.message || e);
-      if (e?.message?.includes("429") || e?.message?.includes("Quota") || e?.message?.includes("exhausted")) {
-        mentorInsights = "Unable to generate insights: The Gemini API key has exceeded its rate limit or free tier quota. Please try again later or check your Google Cloud Console billing.";
-      } else {
-        mentorInsights = "Unable to generate insights at this moment due to a connection issue.";
-      }
-    }
+    break;
+  }
+  if (performanceBrief.length === 0) {
+    console.log("[GET /api/analytics/student/:studentId] no stored performance payload found", { studentId });
   }
 
+  console.log("[GET /api/analytics/student/:studentId] response summary", {
+    totalAssessments: results.length,
+    averageScore: Math.round(avgScore * 10) / 10,
+    passRate: Math.round(passRate * 10) / 10,
+    recentResultsCount: recentResults.length,
+    progressPoints: progressOverTime.length,
+  });
   return res.json({
     student: {
       id: student.id,
