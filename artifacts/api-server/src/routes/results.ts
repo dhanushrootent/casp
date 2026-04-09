@@ -59,8 +59,8 @@ async function generateSummaryFromScore(params: {
   strengthAreas: string[];
   improvementAreas: string[];
 }) {
-  const prompt = `You are an AI education coach.
-Create exactly ONE concise summary sentence (max 30 words) for a teacher dashboard.
+  const prompt = `You are an AI education coach writing student-facing encouragement for a dashboard.
+Write 2-3 short, natural sentences (max 70 words total). Tone: warm, human, and encouraging (not robotic).
 
 Student: ${params.studentName}
 Score Percentage: ${Math.round(params.percentage)}
@@ -69,15 +69,17 @@ Strength Areas: ${params.strengthAreas.join(", ") || "None"}
 Improvement Areas: ${params.improvementAreas.join(", ") || "None"}
 
 Rules:
-- Keep it professional, encouraging, and specific.
-- Mention score context and one focus recommendation.
+- Mention the student by name once.
+- Include score context in plain language (excellent / strong / developing / needs support) based on the score.
+- Include one concrete next-step recommendation.
+- Avoid generic lines like "good job" without specifics.
 - Return plain text only (no markdown, no labels).`;
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { maxOutputTokens: 120 },
+      config: { maxOutputTokens: 220 },
     });
     const text = (response.text || "").trim();
     if (text.length > 0) return text;
@@ -184,6 +186,9 @@ SCORING RULES:
 - Evaluate how well the response uses or aligns with the provided background information and sources.
 - Consider accuracy, relevance, evidence use, citations, organization, conventions, thesis, introduction, and conclusion where applicable.
 - Compute wordCount, paragraphCount, citationCount, and requirement booleans.
+- For each criteriaScores[].feedback, write a human-friendly rationale in 2-4 bullet-style points, focusing on specific evidence from the student's response.
+- The rationale should sound like a real teacher speaking to ${params.studentName ?? "the student"}: warm, clear, specific, and actionable (not robotic).
+- When possible, include one strength point and one improvement point in each criterion feedback.
 - Return only valid JSON in this exact format:
 {
   "totalScore": 0,
@@ -408,6 +413,7 @@ router.post("/results", async (req: Request, res: Response) => {
             rubricParams: writingPayload.rubricParams ?? {},
             grade: assessment.grade,
             subject: assessment.subject,
+            studentName: student.name,
           });
 
           const awarded = Math.max(0, Math.min(pts, Number(grading?.totalScore) || 0));

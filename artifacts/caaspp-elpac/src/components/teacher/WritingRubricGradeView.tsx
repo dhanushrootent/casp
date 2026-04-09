@@ -195,7 +195,7 @@ export function WritingRubricGradeView({ rubric, grading, className = "" }: Prop
                             {note ? (
                               <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs text-slate-700">
                                 <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-blue-700">
-                                  AI rationale
+                                  AI Observations
                                 </span>
                                 {notePoints.length > 1 ? (
                                   <ul className="list-disc pl-4 space-y-1 leading-relaxed">
