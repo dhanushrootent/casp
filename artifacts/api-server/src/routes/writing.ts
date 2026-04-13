@@ -362,10 +362,14 @@ Context:
 
 Requirements:
 - Treat the provided final writing prompt as the exact assignment students will answer.
-- Background information must be 2 to 4 rich, age-appropriate paragraphs.
-- It should help students understand the assignment well enough to plan an outline, write a draft, and revise into a final essay.
-- Sources must be plausible, classroom-appropriate references relevant to the topic.
-- Each source description should explain what the student could learn from it in 2 to 3 sentences.
+- First, write "backgroundInformation" as 2 to 4 rich, age-appropriate paragraphs. It should help students understand the assignment well enough to plan an outline, write a draft, and revise into a final essay.
+- Include exactly 3 to 5 entries in "sources". Each source must be a plausible, classroom-appropriate reference type (title/author/year/url as appropriate).
+- For each source, the "description" field is NOT a biography of the author and NOT generic "about the book" filler. Instead, it must:
+  - Summarize and extend ideas that appear in YOUR "backgroundInformation" above (same topic, key claims, vocabulary, and angle).
+  - Explain how reading or using this source would help a student understand the background context and prepare their essay.
+  - Be written so a student could grasp the main background ideas relevant to that source by reading the description alone (it may briefly name the work only to anchor the reference).
+  - Be between 200 and 300 words per source (count carefully; stay within this range).
+  - Start with a direct, topic-specific statement. Do NOT begin with phrases like "This book", "This source", "This article", "In this book", or similar generic openers.
 
 Return ONLY valid JSON in this exact format:
 {
@@ -375,7 +379,7 @@ Return ONLY valid JSON in this exact format:
       "title": "string",
       "author": "string (optional)",
       "year": "string (optional)",
-      "description": "string",
+      "description": "string (200-300 words; ties to backgroundInformation, not author bio)",
       "type": "article | book | website | primary_source | video",
       "url": "string (optional)"
     }
@@ -387,7 +391,8 @@ Return ONLY valid JSON in this exact format:
       model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
-        maxOutputTokens: 4096,
+        // Long per-source descriptions (200-300 words × several sources) plus background need headroom.
+        maxOutputTokens: 12288,
         responseMimeType: "application/json",
       },
     });

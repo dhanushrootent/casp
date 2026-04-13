@@ -390,7 +390,9 @@ export default function AssessmentTake() {
                             <div className="text-xs text-muted-foreground mb-1">
                               {[source.author, source.year, source.type].filter(Boolean).join(' • ')}
                             </div>
-                            <div className="text-sm text-gray-700">{source.description}</div>
+                            <div className="text-sm text-gray-700 whitespace-pre-line max-h-64 overflow-y-auto pr-1">
+                              {source.description}
+                            </div>
                             {source.url ? (
                               <a
                                 href={source.url}

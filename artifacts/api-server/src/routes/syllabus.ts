@@ -169,11 +169,11 @@ For questions that don't need options, omit them.`;
     skill: q.skill || null,
     orderIndex: q.orderIndex ?? i,
   }));
-console.log({
-    questions,
+console.log("[syllabus] generated", {
+    questionCount: questions.length,
     assessmentTitle: customTitle || parsed.assessmentTitle || `${grade} Grade ${subject} Assessment`,
     summary: parsed.summary || `Assessment covering ${subject} content for Grade ${grade}`,
-  })
+  });
   return res.json({
     questions,
     assessmentTitle: customTitle || parsed.assessmentTitle || `${grade} Grade ${subject} Assessment`,

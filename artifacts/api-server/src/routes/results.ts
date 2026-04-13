@@ -116,6 +116,24 @@ function parseStoredPerformancePayload(feedback: unknown): {
   }
 }
 
+function extractFeedbackSummary(feedback: unknown): string {
+  if (typeof feedback !== "string" || feedback.trim().length === 0) return "";
+  try {
+    const parsed = JSON.parse(feedback) as any;
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.summary === "string" && parsed.summary.trim().length > 0) {
+        return parsed.summary.trim();
+      }
+      if (typeof parsed.mentorInsights === "string" && parsed.mentorInsights.trim().length > 0) {
+        return parsed.mentorInsights.trim().slice(0, 320);
+      }
+    }
+  } catch {
+    // keep raw string fallback below
+  }
+  return feedback.trim().slice(0, 320);
+}
+
 function computeSkillAreasFromTranscript(
   transcript: Array<{ score?: number; answeredQuestions?: Array<{ skill?: string; isCorrect?: boolean | null }> }>,
 ) {
@@ -235,7 +253,81 @@ SCORING RULES:
   const rawText = response.text ?? "";
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Failed to parse AI writing grade response");
-  return JSON.parse(jsonMatch[0]);
+  try {
+    return JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    // One gentle repair pass for common model JSON mistakes (trailing commas).
+    const repaired = jsonMatch[0].replace(/,\s*([}\]])/g, "$1");
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      throw err;
+    }
+  }
+}
+
+function buildFallbackWritingGrading(params: { points: number; rubric: any; studentName: string }) {
+  const safePoints = Math.max(0, Number(params.points) || 0);
+  const totalScore = Math.round(safePoints * 0.5 * 100) / 100;
+  const criteria = Array.isArray(params.rubric?.criteria) ? params.rubric.criteria : [];
+
+  const criteriaScores =
+    criteria.length > 0
+      ? criteria.map((c: any, idx: number) => {
+          const maxScore = Math.max(
+            0,
+            Number(c?.points) || (safePoints > 0 ? safePoints / criteria.length : 0),
+          );
+          const score = Math.round(maxScore * 0.5 * 100) / 100;
+          return {
+            criterionId: c?.id != null ? String(c.id) : `criterion_${idx + 1}`,
+            criterionName: c?.name != null ? String(c.name) : `Criterion ${idx + 1}`,
+            score,
+            maxScore,
+            level: "Estimated",
+            feedback:
+              `- Automated scoring fallback used because rubric parsing failed for this response.\n` +
+              `- ${params.studentName} should review this criterion and refine evidence clarity and rubric alignment.\n` +
+              `- Use "Regenerate insights" if you want a fresh AI explanation for this submission.`,
+            quotes: [],
+          };
+        })
+      : [
+          {
+            criterionId: "overall",
+            criterionName: "Overall Writing",
+            score: totalScore,
+            maxScore: safePoints,
+            level: "Estimated",
+            feedback:
+              `- Automated scoring fallback used because rubric parsing failed for this response.\n` +
+              `- ${params.studentName} should revise for stronger rubric alignment and clearer evidence.`,
+            quotes: [],
+          },
+        ];
+
+  return {
+    totalScore,
+    maxScore: safePoints,
+    percentage: safePoints > 0 ? (totalScore / safePoints) * 100 : 0,
+    criteriaScores,
+    overallFeedback: {
+      strengths: ["Response was captured and saved successfully."],
+      areasForImprovement: ["Re-run grading to receive full criterion-level AI scoring."],
+      teacherNote: "Fallback score was applied due to model JSON parse failure.",
+      studentSummary: "Your answer was submitted. A temporary score was applied while AI grading recovers.",
+    },
+    wordCount: 0,
+    paragraphCount: 0,
+    citationCount: 0,
+    meetsRequirements: {
+      wordCount: false,
+      paragraphCount: false,
+      citations: false,
+      thesis: false,
+      introConclusion: false,
+    },
+  };
 }
 
 function firstQueryString(value: unknown): string | undefined {
@@ -260,7 +352,19 @@ router.get("/results", async (req: Request, res: Response) => {
     if (studentId) conditions.push(eq(resultsTable.studentId, studentId));
     if (assessmentId) conditions.push(eq(resultsTable.assessmentId, assessmentId));
 
-    const baseQuery = db.select().from(resultsTable);
+    const listColumns = {
+      id: resultsTable.id,
+      assessmentId: resultsTable.assessmentId,
+      studentId: resultsTable.studentId,
+      score: resultsTable.score,
+      maxScore: resultsTable.maxScore,
+      percentage: resultsTable.percentage,
+      passed: resultsTable.passed,
+      timeSpent: resultsTable.timeSpent,
+      completedAt: resultsTable.completedAt,
+    };
+
+    const baseQuery = db.select(listColumns).from(resultsTable);
     const results =
       conditions.length === 0
         ? await baseQuery.orderBy(desc(resultsTable.completedAt))
@@ -293,6 +397,8 @@ router.get("/results", async (req: Request, res: Response) => {
     const assessmentMap = Object.fromEntries(assessments.map((a) => [a.id, a]));
     const studentMap = Object.fromEntries(students.map((s) => [s.id, s]));
 
+    // Do not include `feedback` here — it can be huge (JSON with full transcripts + AI payloads).
+    // Listing all results with feedback caused multi-GB JSON.stringify and OOM. Use GET /results/:id for detail.
     let enriched = results.map((r) => ({
       id: r.id,
       assessmentId: r.assessmentId,
@@ -306,7 +412,6 @@ router.get("/results", async (req: Request, res: Response) => {
       passed: Boolean(r.passed),
       timeSpent: Number(r.timeSpent) || 0,
       completedAt: r.completedAt,
-      feedback: r.feedback,
     }));
 
     if (classId) {
@@ -433,7 +538,18 @@ router.post("/results", async (req: Request, res: Response) => {
           });
         } catch (error) {
           console.error("[POST /api/results] Failed AI grade for essay:", error);
-          score += pts * 0.5;
+          const fallbackGrading = buildFallbackWritingGrading({
+            points: pts,
+            rubric: writingPayload.rubric ?? {},
+            studentName: student.name,
+          });
+          const awarded = Math.max(0, Math.min(pts, Number(fallbackGrading.totalScore) || 0));
+          score += awarded;
+          answerFeedback.push({
+            questionId: question.id,
+            grading: fallbackGrading,
+            rubric: writingPayload.rubric ?? {},
+          });
           performanceAnswers.push({
             questionId: question.id,
             text: question.text,
@@ -482,13 +598,6 @@ router.post("/results", async (req: Request, res: Response) => {
   });
 
   const id = uuidv4();
-  const currentPerformanceEntry = {
-    resultId: id,
-    testTitle: assessment.title,
-    score: percentage,
-    feedback: "",
-    answeredQuestions: performanceAnswers,
-  };
 
   const previousResults = await db
     .select()
@@ -502,21 +611,21 @@ router.post("/results", async (req: Request, res: Response) => {
     id: string;
     assessmentId: string;
     percentage: number;
-    feedback: string;
+    feedbackSummary: string;
     answers: Array<{ questionId: string; answer: string }>;
   }> = [
     ...previousResults.map((r) => ({
       id: r.id,
       assessmentId: r.assessmentId,
       percentage: Number(r.percentage) || 0,
-      feedback: typeof r.feedback === "string" ? r.feedback : "",
+      feedbackSummary: extractFeedbackSummary(r.feedback),
       answers: Array.isArray(r.answers) ? (r.answers as Array<{ questionId: string; answer: string }>) : [],
     })),
     {
       id,
       assessmentId,
       percentage,
-      feedback: "",
+      feedbackSummary: "",
       answers: Array.isArray(answers) ? answers : [],
     },
   ];
@@ -570,8 +679,6 @@ router.post("/results", async (req: Request, res: Response) => {
     strengthAreas,
     improvementAreas,
   });
-  currentPerformanceEntry.feedback = summary;
-
   const performanceBrief = combinedResults.map((r) => {
     const answeredQuestions = r.answers.map((a) => {
       const q = combinedQuestionMap[a.questionId];
@@ -588,7 +695,7 @@ router.post("/results", async (req: Request, res: Response) => {
       resultId: r.id,
       testTitle: combinedAssessmentMap[r.assessmentId]?.title ?? "Unknown",
       score: r.percentage,
-      feedback: r.feedback,
+      feedback: r.feedbackSummary,
       answeredQuestions,
     };
   });
@@ -627,12 +734,9 @@ router.post("/results", async (req: Request, res: Response) => {
       detailedTranscript: performanceBrief,
     });
   }
-  const detailedTranscriptWithCurrentFeedback = performanceBrief.map((entry: any) =>
-    entry?.resultId === id ? { ...entry, feedback } : entry,
-  );
   feedback = JSON.stringify({
     ...(JSON.parse(feedback) as any),
-    detailedTranscript: detailedTranscriptWithCurrentFeedback,
+    detailedTranscript: performanceBrief,
   });
   console.log("[POST /api/results] feedback payload prepared", {
     kind: answerFeedback.length > 0 ? "ai_writing_result_v1" : "student_performance_v1",
@@ -692,8 +796,11 @@ router.get("/results/:resultId", async (req: Request, res: Response) => {
   const answerDetails = (result.answers as { questionId: string; answer: string }[]).map(a => {
     const q = questionMap[a.questionId];
     if (!q) return null;
-    const isCorrect = q.type === "multiple_choice" ? a.answer === q.correctAnswer : false;
-    const pts = isCorrect ? q.points : (q.type === "essay" ? q.points * 0.5 : 0);
+    const isObjective = q.type === "multiple_choice" || q.type === "multiple_choice_single";
+    const isCorrect = isObjective
+      ? (q.correctAnswer ? a.answer === q.correctAnswer : null)
+      : null;
+    const pts = isCorrect === true ? q.points : (q.type === "essay" ? q.points * 0.5 : 0);
     return {
       questionId: q.id,
       questionText: q.text,

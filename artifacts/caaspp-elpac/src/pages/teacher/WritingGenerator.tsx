@@ -1261,10 +1261,10 @@ export default function WritingGenerator() {
 
                             <div>
                               <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                Description
+                                Description (background context; often long)
                               </label>
                               <textarea
-                                className="w-full rounded-xl border border-input bg-background px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[90px] resize-y"
+                                className="w-full rounded-xl border border-input bg-background px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[200px] max-h-[min(50vh,28rem)] resize-y overflow-y-auto"
                                 value={s.description}
                                 onChange={(e) => {
                                   const v = e.target.value;
