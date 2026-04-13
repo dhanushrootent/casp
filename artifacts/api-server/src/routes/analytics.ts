@@ -33,6 +33,24 @@ function parseStoredPerformance(feedback: unknown): {
   }
 }
 
+function stripRecursiveTranscriptFromFeedback(feedback: unknown): string {
+  if (typeof feedback !== "string" || feedback.trim().length === 0) return "";
+  try {
+    const parsed = JSON.parse(feedback) as any;
+    if (!parsed || typeof parsed !== "object") return feedback;
+    if (parsed.kind === "student_performance_v1" || parsed.kind === "ai_writing_result_v1") {
+      // Keep complete per-result report (summary/questions/mentor insights),
+      // but drop nested detailed transcript to prevent response explosion/OOM.
+      const compact = { ...parsed };
+      delete compact.detailedTranscript;
+      return JSON.stringify(compact);
+    }
+    return feedback;
+  } catch {
+    return feedback;
+  }
+}
+
 router.get("/analytics/overview", async (req: Request, res: Response) => {
   const { assessmentType } = req.query;
 
@@ -203,13 +221,26 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
   const latestByCompletedAt = [...results].sort(
     (a, b) => b.completedAt.getTime() - a.completedAt.getTime(),
   );
+  const feedbackByResultId = Object.fromEntries(
+    results.map((rr) => [rr.id, typeof rr.feedback === "string" ? rr.feedback : ""]),
+  );
   for (const r of latestByCompletedAt) {
     const stored = parseStoredPerformance(r.feedback);
     if (!stored) continue;
     strengthAreas = stored.strengthAreas ?? [];
     improvementAreas = stored.improvementAreas ?? [];
     mentorInsights = stored.mentorInsights ?? mentorInsights;
-    performanceBrief = stored.detailedTranscript ?? [];
+    performanceBrief = (stored.detailedTranscript ?? []).map((entry: any) => {
+      const resultId = typeof entry?.resultId === "string" ? entry.resultId : "";
+      const fullFeedback = resultId ? feedbackByResultId[resultId] : "";
+      return {
+        ...entry,
+        // Surface complete report fields but remove recursive transcript payload.
+        feedback: stripRecursiveTranscriptFromFeedback(
+          fullFeedback || (typeof entry?.feedback === "string" ? entry.feedback : ""),
+        ),
+      };
+    });
     console.log("[GET /api/analytics/student/:studentId] using stored performance", {
       sourceResultId: r.id,
       hasMentorInsights: typeof stored.mentorInsights === "string" && stored.mentorInsights.length > 0,
