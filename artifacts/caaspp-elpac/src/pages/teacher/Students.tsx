@@ -105,12 +105,30 @@ export default function TeacherStudents() {
       const nextQuestions = (writingFeedback?.questions || []).map((item: any) => {
         const grading = item?.grading;
         if (!grading || !Array.isArray(grading.criteriaScores)) return item;
+        const rubricCriteria = Array.isArray(item?.rubric?.criteria) ? item.rubric.criteria : [];
         const nextCriteria = grading.criteriaScores.map((cs: any, idx: number) => {
           const criterionId = String(cs?.criterionId ?? `criterion_${idx + 1}`);
           const maxScore = Number(cs?.maxScore) || 0;
           const raw = criterionDraft[criterionId];
           const score = Number.isFinite(raw) ? Math.max(0, Math.min(maxScore, raw)) : Number(cs?.score) || 0;
-          return { ...cs, score };
+          const rubricCriterion =
+            rubricCriteria.find((c: any) => String(c?.id ?? "") === criterionId) ||
+            rubricCriteria.find((c: any) => String(c?.name ?? "") === String(cs?.criterionName ?? "")) ||
+            rubricCriteria[idx];
+          const rubricLevels = Array.isArray(rubricCriterion?.levels) ? rubricCriterion.levels : [];
+          const scoredLevels = rubricLevels
+            .map((lv: any) => ({
+              label: String(lv?.label ?? ""),
+              score: Number(lv?.score),
+            }))
+            .filter((lv: any) => lv.label.length > 0 && Number.isFinite(lv.score))
+            .sort((a: any, b: any) => b.score - a.score);
+          const computedLevel =
+            scoredLevels.length > 0
+              ? (scoredLevels.find((lv: any) => score >= lv.score)?.label ??
+                scoredLevels[scoredLevels.length - 1].label)
+              : String(cs?.level ?? "");
+          return { ...cs, score, level: computedLevel };
         });
         const totalScore = nextCriteria.reduce((sum: number, cs: any) => sum + (Number(cs?.score) || 0), 0);
         const maxScore = nextCriteria.reduce((sum: number, cs: any) => sum + (Number(cs?.maxScore) || 0), 0);

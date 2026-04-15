@@ -6,6 +6,21 @@ import { v4 as uuidv4 } from "uuid";
 
 const router: IRouter = Router();
 
+function parseWritingMetaFromExplanation(explanation: string | null | undefined): {
+  maxAttempts: number | null;
+  dueDate: string | null;
+} {
+  if (!explanation) return { maxAttempts: null, dueDate: null };
+  try {
+    const payload = JSON.parse(explanation) as { maxAttempts?: unknown; dueDate?: unknown };
+    const maxAttempts = Number.isFinite(Number(payload.maxAttempts)) ? Math.max(1, Number(payload.maxAttempts)) : null;
+    const dueDate = typeof payload.dueDate === "string" && payload.dueDate.trim().length > 0 ? payload.dueDate : null;
+    return { maxAttempts, dueDate };
+  } catch {
+    return { maxAttempts: null, dueDate: null };
+  }
+}
+
 router.get("/assessments", async (req: Request, res: Response) => {
   const { type, subject, grade } = req.query;
   let assessments = await db.select().from(assessmentsTable);
@@ -14,7 +29,27 @@ router.get("/assessments", async (req: Request, res: Response) => {
   if (subject) assessments = assessments.filter(a => a.subject === subject);
   if (grade) assessments = assessments.filter(a => a.grade === grade);
 
-  return res.json(assessments);
+  if (assessments.length === 0) return res.json(assessments);
+
+  const questionRows = await db.select().from(questionsTable);
+  const questionsByAssessment = questionRows.reduce((acc: Record<string, typeof questionRows>, q) => {
+    if (!acc[q.assessmentId]) acc[q.assessmentId] = [];
+    acc[q.assessmentId].push(q);
+    return acc;
+  }, {});
+
+  const enriched = assessments.map((a) => {
+    const questions = (questionsByAssessment[a.id] || []).sort((x, y) => x.orderIndex - y.orderIndex);
+    const rubricSourceQuestion = questions.find((q) => q.type === "essay") ?? questions[0];
+    const meta = parseWritingMetaFromExplanation(rubricSourceQuestion?.explanation);
+    return {
+      ...a,
+      maxAttempts: meta.maxAttempts ?? 1,
+      dueDate: meta.dueDate,
+    };
+  });
+
+  return res.json(enriched);
 });
 
 router.post("/assessments", async (req: Request, res: Response) => {
@@ -61,13 +96,12 @@ router.get("/assessments/:assessmentId", async (req: Request, res: Response) => 
       const payload = JSON.parse(rubricSourceQuestion.explanation) as {
         rubric?: unknown;
         rubricParams?: unknown;
-        maxAttempts?: unknown;
-        dueDate?: unknown;
       };
       rubric = payload.rubric ?? null;
       rubricParams = payload.rubricParams ?? null;
-      maxAttempts = Number.isFinite(Number(payload.maxAttempts)) ? Math.max(1, Number(payload.maxAttempts)) : null;
-      dueDate = typeof payload.dueDate === "string" && payload.dueDate.trim().length > 0 ? payload.dueDate : null;
+      const meta = parseWritingMetaFromExplanation(rubricSourceQuestion.explanation);
+      maxAttempts = meta.maxAttempts;
+      dueDate = meta.dueDate;
     } catch {
       rubric = null;
       rubricParams = null;

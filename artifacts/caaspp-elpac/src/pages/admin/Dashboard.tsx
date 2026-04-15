@@ -24,10 +24,12 @@ export default function AdminDashboard() {
     );
   }
 
-  const subjectData = analytics?.subjectPerformance?.map(s => ({
-    name: s.subject,
-    score: Math.round(s.averageScore)
-  })) || [];
+  const subjectData = (analytics?.subjectPerformance ?? [])
+    .filter((s) => typeof s.subject === 'string' && s.subject.trim().length > 0 && s.subject !== 'Unknown')
+    .map((s) => ({
+      name: s.subject,
+      score: Math.round(s.averageScore),
+    }));
 
   const passRateValue = Math.round(analytics?.passRate || 0);
   const pieData = [
@@ -97,18 +99,24 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={subjectData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: 'hsl(var(--muted-foreground))'}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: 'hsl(var(--muted-foreground))'}} domain={[0, 100]} />
-                    <RechartsTooltip 
-                      cursor={{fill: 'hsl(var(--muted))'}}
-                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                    />
-                    <Bar dataKey="score" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} maxBarSize={60} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {subjectData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={subjectData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: 'hsl(var(--muted-foreground))'}} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fill: 'hsl(var(--muted-foreground))'}} domain={[0, 100]} />
+                      <RechartsTooltip 
+                        cursor={{fill: 'hsl(var(--muted))'}}
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                      />
+                      <Bar dataKey="score" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} maxBarSize={60} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                    No subject-level score data available.
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

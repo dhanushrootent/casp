@@ -19,9 +19,21 @@ export default function StudentDashboard() {
     a.classId && user?.classIds?.includes(a.classId) && a.status === 'active'
   ) || [];
 
-  // Filter out assessments that the student has already completed
-  const completedAssessmentIds = new Set((results ?? []).map(r => r.assessmentId));
-  const assignedAssessments = rawAssigned.filter(a => !completedAssessmentIds.has(a.id));
+  const attemptsUsedByAssessmentId = (results ?? []).reduce((acc: Record<string, number>, r: any) => {
+    acc[r.assessmentId] = (acc[r.assessmentId] || 0) + 1;
+    return acc;
+  }, {});
+
+  const assignedAssessments = rawAssigned
+    .map((a: any) => {
+      const maxAttempts = Math.max(1, Number(a.maxAttempts) || 1);
+      const attemptsUsed = attemptsUsedByAssessmentId[a.id] || 0;
+      const attemptsRemaining = Math.max(0, maxAttempts - attemptsUsed);
+      const dueDate = typeof a.dueDate === 'string' && a.dueDate.length > 0 ? new Date(a.dueDate) : null;
+      const isExpired = dueDate ? dueDate.getTime() < Date.now() : false;
+      return { ...a, maxAttempts, attemptsUsed, attemptsRemaining, dueDate, isExpired };
+    })
+    .filter((a: any) => a.attemptsRemaining > 0);
 
   // KPI Calculations
   const completedCount = results?.length ?? 0;
@@ -33,11 +45,11 @@ export default function StudentDashboard() {
       <div className="space-y-8">
         <section>
           <h1 className="text-3xl font-display font-bold mb-2">Welcome back, {user?.name || user?.username}!</h1>
-          <p className="text-muted-foreground text-lg">You have {assignedAssessments.length} assessment(s) waiting for you.</p>
+          <p className="text-muted-foreground text-lg">You have {assignedAssessments.length} assessment(s) available for attempts.</p>
         </section>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Card className="bg-gradient-to-br from-primary to-primary/90 text-primary-foreground border-0 shadow-lg shadow-primary/20">
+          <Card className="bg-linear-to-br from-primary to-primary/90 text-primary-foreground border-0 shadow-lg shadow-primary/20">
             <CardContent className="p-6">
               <BookOpen className="w-8 h-8 mb-4 opacity-80" />
               <p className="text-4xl font-bold font-display mb-1">{assignedAssessments.length}</p>
@@ -76,7 +88,14 @@ export default function StudentDashboard() {
               <div className="col-span-full py-10 text-center text-muted-foreground">You have no pending assessments assigned to your classes at this time.</div>
             ) : (
               assignedAssessments.map((assessment: any) => (
-                <Card key={assessment.id} className="flex flex-col hover:border-primary/50 hover:shadow-lg transition-all duration-300">
+                <Card
+                  key={assessment.id}
+                  className={`flex flex-col transition-all duration-300 ${
+                    assessment.isExpired
+                      ? 'bg-muted/40 border-muted-foreground/20 opacity-75'
+                      : 'hover:border-primary/50 hover:shadow-lg'
+                  }`}
+                >
                   <CardHeader className="pb-4">
                     <div className="flex justify-between items-start mb-2">
                       <Badge variant={assessment.type === 'CAASPP' ? 'default' : 'secondary'}>
@@ -91,14 +110,33 @@ export default function StudentDashboard() {
                       <span className="flex items-center gap-1.5"><Clock className="w-4 h-4" /> {assessment.duration} mins</span>
                       <span className="flex items-center gap-1.5"><BookOpen className="w-4 h-4" /> {assessment.questionCount} Questions</span>
                     </div>
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      Attempts: {assessment.attemptsUsed}/{assessment.maxAttempts}
+                    </div>
+                    {assessment.dueDate ? (
+                      <div className={`mt-1 text-sm ${assessment.isExpired ? 'text-red-600 font-semibold' : 'text-muted-foreground'}`}>
+                        Due: {assessment.dueDate.toLocaleString()}
+                      </div>
+                    ) : null}
+                    {assessment.isExpired ? (
+                      <div className="mt-2 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-full px-3 py-1 inline-block">
+                        Assessment has expired
+                      </div>
+                    ) : null}
                   </CardContent>
                   <div className="p-6 pt-0 mt-auto">
-                    <Link href={`/student/assessment/${assessment.id}`} className="block">
-                      <Button className="w-full group" variant="default">
-                        Start Assessment
-                        <PlayCircle className="w-4 h-4 ml-2 group-hover:scale-110 transition-transform" />
+                    {assessment.isExpired ? (
+                      <Button className="w-full" variant="outline" disabled>
+                        Assessment Expired
                       </Button>
-                    </Link>
+                    ) : (
+                      <Link href={`/student/assessment/${assessment.id}`} className="block">
+                        <Button className="w-full group" variant="default">
+                          {assessment.attemptsUsed > 0 ? 'Continue / Retry Assessment' : 'Start Assessment'}
+                          <PlayCircle className="w-4 h-4 ml-2 group-hover:scale-110 transition-transform" />
+                        </Button>
+                      </Link>
+                    )}
                   </div>
                 </Card>
               ))

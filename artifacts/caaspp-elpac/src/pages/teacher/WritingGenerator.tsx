@@ -246,10 +246,10 @@ export default function WritingGenerator() {
   const [genre, setGenre] = useState<WritingGenre>("");
   const [manualAssessmentTitle, setManualAssessmentTitle] = useState("");
   const [selectedClassId, setSelectedClassId] = useState<string>("");
-  const [maxAttempts, setMaxAttempts] = useState(1);
+  const [maxAttemptsInput, setMaxAttemptsInput] = useState("1");
   const [dueDate, setDueDate] = useState("");
   const [teacherProvidedSourcesInput, setTeacherProvidedSourcesInput] = useState("");
-  const [sourceDescriptionMaxWords, setSourceDescriptionMaxWords] = useState(220);
+  const [sourceDescriptionMaxWordsInput, setSourceDescriptionMaxWordsInput] = useState("220");
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [rubricParams, setRubricParams] = useState<RubricParams>({
@@ -292,6 +292,8 @@ export default function WritingGenerator() {
   );
 
   const topicCharCount = topic.length;
+  const maxAttempts = clampInt(parseInt(maxAttemptsInput || "1", 10), 1, 10);
+  const sourceDescriptionMaxWords = clampInt(parseInt(sourceDescriptionMaxWordsInput || "220", 10), 40, 500);
   const teacherProvidedSources = useMemo(
     () => parseTeacherProvidedSources(teacherProvidedSourcesInput),
     [teacherProvidedSourcesInput],
@@ -368,7 +370,7 @@ export default function WritingGenerator() {
             assessmentTitle: manualAssessmentTitle || undefined,
           },
           teacherProvidedSources: teacherProvidedSources.length > 0 ? teacherProvidedSources : undefined,
-          sourceDescriptionMaxWords: clampInt(sourceDescriptionMaxWords, 40, 500),
+          sourceDescriptionMaxWords,
         } as any,
       },
       {
@@ -409,7 +411,7 @@ export default function WritingGenerator() {
           rubricType,
           genre,
           teacherProvidedSources: teacherProvidedSources.length > 0 ? teacherProvidedSources : undefined,
-          sourceDescriptionMaxWords: clampInt(sourceDescriptionMaxWords, 40, 500),
+          sourceDescriptionMaxWords,
         } as any,
       });
 
@@ -495,7 +497,7 @@ export default function WritingGenerator() {
         maxAttempts,
         dueDate: dueDate || null,
         teacherProvidedSources,
-        sourceDescriptionMaxWords: clampInt(sourceDescriptionMaxWords, 40, 500),
+        sourceDescriptionMaxWords,
       };
 
       const newAssessment = await createAssessmentMutation.mutateAsync({
@@ -696,18 +698,15 @@ export default function WritingGenerator() {
                       type="number"
                       min={1}
                       max={10}
-                      value={maxAttempts}
-                      onChange={(e) =>
-                        setMaxAttempts(
-                          Math.max(1, Math.min(10, parseInt(e.target.value || "1", 10))),
-                        )
-                      }
+                      value={maxAttemptsInput}
+                      onChange={(e) => setMaxAttemptsInput(e.target.value)}
+                      onBlur={() => setMaxAttemptsInput(String(maxAttempts))}
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-2">Due Date (Optional)</label>
                     <Input
-                      className="w-full h-11 rounded-xl"
+                      className="w-full h-11 rounded-xl pr-12 scheme-light [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-100"
                       type="datetime-local"
                       value={dueDate}
                       onChange={(e) => setDueDate(e.target.value)}
@@ -964,12 +963,9 @@ export default function WritingGenerator() {
                           type="number"
                           min={40}
                           max={500}
-                          value={sourceDescriptionMaxWords}
-                          onChange={(e) =>
-                            setSourceDescriptionMaxWords(
-                              clampInt(parseInt(e.target.value || "220", 10), 40, 500),
-                            )
-                          }
+                          value={sourceDescriptionMaxWordsInput}
+                          onChange={(e) => setSourceDescriptionMaxWordsInput(e.target.value)}
+                          onBlur={() => setSourceDescriptionMaxWordsInput(String(sourceDescriptionMaxWords))}
                         />
                         <p className="text-xs text-muted-foreground mt-1">
                           Limits how long each generated source description can be (40–500 words).
