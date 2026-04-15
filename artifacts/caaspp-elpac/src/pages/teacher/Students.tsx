@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { WritingRubricGradeView } from '@/components/teacher/WritingRubricGradeView';
+import { API_BASE_URL } from '@/config/api';
 
 function parseStoredFeedback(feedback: unknown): any | null {
   if (typeof feedback !== 'string' || feedback.trim().length === 0) return null;
@@ -52,6 +53,10 @@ export default function TeacherStudents() {
     const queryClient = useQueryClient();
     const { toast } = useToast();
     const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
+    const [finalCommentDraftByResultId, setFinalCommentDraftByResultId] = useState<Record<string, string>>({});
+    const [manualCriterionScoreByResultId, setManualCriterionScoreByResultId] = useState<
+      Record<string, Record<string, number>>
+    >({});
 
     const toggleResult = (idx: string) => {
       setExpandedResults(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -69,9 +74,110 @@ export default function TeacherStudents() {
       });
     };
 
+    const saveFinalComment = async (resultId: string) => {
+      const teacherFinalComment = (finalCommentDraftByResultId[resultId] ?? "").trim();
+      try {
+        const resp = await fetch(`${API_BASE_URL}/api/results/${resultId}/final-comment`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ teacherFinalComment }),
+        });
+        if (!resp.ok) throw new Error("Failed to save final comment");
+        toast({ title: "Final comment saved" });
+        queryClient.invalidateQueries({ queryKey: getGetStudentAnalyticsQueryKey(studentId) });
+      } catch {
+        toast({ title: "Failed to save final comment", variant: "destructive" });
+      }
+    };
+
+    const setManualCriterionScore = (resultId: string, criterionId: string, score: number) => {
+      setManualCriterionScoreByResultId((prev) => ({
+        ...prev,
+        [resultId]: {
+          ...(prev[resultId] || {}),
+          [criterionId]: score,
+        },
+      }));
+    };
+
+    const saveFinalizedScores = async (resultId: string, writingFeedback: any) => {
+      const criterionDraft = manualCriterionScoreByResultId[resultId] || {};
+      const nextQuestions = (writingFeedback?.questions || []).map((item: any) => {
+        const grading = item?.grading;
+        if (!grading || !Array.isArray(grading.criteriaScores)) return item;
+        const nextCriteria = grading.criteriaScores.map((cs: any, idx: number) => {
+          const criterionId = String(cs?.criterionId ?? `criterion_${idx + 1}`);
+          const maxScore = Number(cs?.maxScore) || 0;
+          const raw = criterionDraft[criterionId];
+          const score = Number.isFinite(raw) ? Math.max(0, Math.min(maxScore, raw)) : Number(cs?.score) || 0;
+          return { ...cs, score };
+        });
+        const totalScore = nextCriteria.reduce((sum: number, cs: any) => sum + (Number(cs?.score) || 0), 0);
+        const maxScore = nextCriteria.reduce((sum: number, cs: any) => sum + (Number(cs?.maxScore) || 0), 0);
+        return {
+          ...item,
+          grading: {
+            ...grading,
+            criteriaScores: nextCriteria,
+            totalScore,
+            maxScore,
+            percentage: maxScore > 0 ? (totalScore / maxScore) * 100 : 0,
+          },
+        };
+      });
+
+      const maxScoreFromQuestions = nextQuestions.reduce(
+        (sum: number, item: any) => sum + (Number(item?.grading?.maxScore) || 0),
+        0,
+      );
+      const totalScoreFromQuestions = nextQuestions.reduce(
+        (sum: number, item: any) => sum + (Number(item?.grading?.totalScore) || 0),
+        0,
+      );
+      const manualScore = Math.round(totalScoreFromQuestions * 100) / 100;
+      const draftPercentage =
+        maxScoreFromQuestions > 0 ? Math.round(((manualScore / maxScoreFromQuestions) * 100) * 100) / 100 : 0;
+      const teacherFinalComment = (finalCommentDraftByResultId[resultId] ?? "").trim();
+
+      try {
+        const resp = await fetch(`${API_BASE_URL}/api/results/${resultId}/finalize-scores`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            manualPercentage: draftPercentage,
+            manualScore,
+            manualMaxScore: maxScoreFromQuestions,
+            teacherFinalComment: teacherFinalComment.length > 0 ? teacherFinalComment : undefined,
+            questions: nextQuestions.map((q: any) => ({ questionId: q.questionId, grading: q.grading })),
+          }),
+        });
+        if (!resp.ok) throw new Error("Failed to finalize scores");
+        toast({ title: "Scores finalized and published" });
+        queryClient.invalidateQueries({ queryKey: getGetStudentAnalyticsQueryKey(studentId) });
+      } catch {
+        toast({ title: "Failed to finalize scores", variant: "destructive" });
+      }
+    };
+
     if (isLoading) return <div className="p-8 flex items-center justify-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Analyzing performance data...</div>;
 
     const insights = (analytics as any)?.mentorInsights || "No detailed insights available yet. Gemni is analyzing more assessment data to provide a personalized learning path.";
+    const groupedTranscriptEntries = Object.entries(
+      ((analytics as any)?.detailedTranscript ?? []).reduce(
+        (acc: Record<string, { label: string; items: any[] }>, transcript: any) => {
+          const key = String(transcript?.assessmentId ?? transcript?.testTitle ?? transcript?.resultId ?? "assessment");
+          if (!acc[key]) {
+            acc[key] = {
+              label: String(transcript?.testTitle ?? transcript?.assessmentTitle ?? "Assessment"),
+              items: [],
+            };
+          }
+          acc[key].items.push(transcript);
+          return acc;
+        },
+        {},
+      ),
+    ) as Array<[string, { label: string; items: any[] }]>;
 
     return (
       <div className="bg-linear-to-b from-blue-50/40 to-slate-50/40 p-5 rounded-xl border border-blue-100/60 m-3 mt-0 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -106,207 +212,186 @@ export default function TeacherStudents() {
         </div>
 
         {/* Detailed Transcript View */}
-        {(analytics as any)?.detailedTranscript?.length > 0 && (
+        {groupedTranscriptEntries.length > 0 && (
           <div className="mt-6">
             <h4 className="text-md font-bold text-slate-900 border-b border-blue-200 pb-2 mb-4 flex items-center justify-between">
               <span>Assessment Outcomes</span>
-              <span className="text-xs font-semibold text-slate-500">{(analytics as any).detailedTranscript.length} item(s)</span>
+              <span className="text-xs font-semibold text-slate-500">{groupedTranscriptEntries.length} assessment(s)</span>
             </h4>
             <div className="space-y-4">
-              {(analytics as any).detailedTranscript.map((transcript: any, idx: number) => {
-                const isResultExpanded = expandedResults[idx.toString()];
-                const isGenerating = generateInsightsMutation.isPending && generateInsightsMutation.variables?.resultId === transcript.resultId;
-                const storedFeedback = parseStoredFeedback(transcript.feedback);
-                const writingFeedback = storedFeedback?.kind === 'ai_writing_result_v1' ? storedFeedback : null;
-                const transcriptSummary =
-                  typeof storedFeedback?.summary === 'string'
-                    ? storedFeedback.summary
-                    : (typeof transcript.feedback === 'string' ? transcript.feedback : '');
-                const essayAnswers = (transcript.answeredQuestions || []).filter(
-                  (q: any) =>
-                    q &&
-                    typeof q.studentAnswer === 'string' &&
-                    q.studentAnswer.trim().length > 0 &&
-                    (!q.correctAnswer || q.correctAnswer === 'Subjective'),
-                );
+              {groupedTranscriptEntries.map(([assessmentKey, group]) => {
+                const isResultExpanded = expandedResults[assessmentKey];
                 return (
-                  <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div key={assessmentKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     <button 
-                      onClick={() => toggleResult(idx.toString())}
+                      onClick={() => toggleResult(assessmentKey)}
                       className="w-full flex justify-between items-center p-4 hover:bg-slate-50 transition-colors"
                     >
                       <div className="flex items-center gap-3">
                         {isResultExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-                        <span className="font-semibold text-slate-800 text-left">{transcript.testTitle}</span>
+                        <span className="font-semibold text-slate-800 text-left">{group.label}</span>
                       </div>
-                      <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">Score: {Math.round(transcript.score)}%</span>
+                      <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                        Attempts: {group.items.length}
+                      </span>
                     </button>
                     
                     {isResultExpanded && (
-                      <div className="p-5 pt-0 border-t border-slate-100">
-                        {writingFeedback ? (
-                          <div className="space-y-4 mb-4 mt-4">
-                            <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 relative">
-                              <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
-                                <Sparkles className="w-4 h-4" /> Gemini Writing Evaluation
-                              </h5>
-                              <p className="text-sm text-slate-700 pr-24">{writingFeedback.summary}</p>
+                      <div className="p-5 border-t border-slate-100 space-y-4">
+                        {group.items.map((transcript: any, idx: number) => {
+                          const isGenerating = generateInsightsMutation.isPending && generateInsightsMutation.variables?.resultId === transcript.resultId;
+                          const storedFeedback = parseStoredFeedback(transcript.feedback);
+                          const writingFeedback = storedFeedback?.kind === 'ai_writing_result_v1' ? storedFeedback : null;
+                          const transcriptSummary =
+                            typeof storedFeedback?.summary === 'string'
+                              ? storedFeedback.summary
+                              : (typeof transcript.feedback === 'string' ? transcript.feedback : '');
+                          const essayAnswers = (transcript.answeredQuestions || []).filter(
+                            (q: any) =>
+                              q &&
+                              typeof q.studentAnswer === 'string' &&
+                              q.studentAnswer.trim().length > 0 &&
+                              (!q.correctAnswer || q.correctAnswer === 'Subjective'),
+                          );
+
+                          return (
+                            <div key={transcript.resultId || idx} className="rounded-xl border border-slate-200 bg-slate-50/30 p-4 space-y-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-semibold text-slate-800">Attempt {idx + 1}</div>
+                                <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                                  Score: {Math.round(transcript.score)}%
+                                </span>
+                              </div>
+
+                              {writingFeedback ? (
+                                <div className="space-y-4">
+                                  <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 relative">
+                                    <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                      <Sparkles className="w-4 h-4" /> Gemini Writing Evaluation
+                                    </h5>
+                                    <p className="text-sm text-slate-700 pr-24">{writingFeedback.summary}</p>
+                                    {transcript.resultId ? (
+                                      <button
+                                        disabled={isGenerating}
+                                        onClick={() => handleGenerateInsights(transcript.resultId)}
+                                        className="absolute top-4 right-4 text-xs font-medium bg-white text-blue-600 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors disabled:opacity-50"
+                                      >
+                                        {isGenerating ? <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> : null}
+                                        Regenerate
+                                      </button>
+                                    ) : null}
+                                  </div>
+
+                                  {(writingFeedback.questions || []).map((item: any, itemIdx: number) => {
+                                    const grading = item?.grading;
+                                    if (!grading) return null;
+                                    return (
+                                      <div key={item.questionId || itemIdx} className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+                                        <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Rubric &amp; criterion performance</div>
+                                        <WritingRubricGradeView rubric={item.rubric} grading={grading} />
+                                        <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                                          <div className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">Teacher score controls</div>
+                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {(grading.criteriaScores || []).map((cs: any, cIdx: number) => {
+                                              const criterionId = String(cs?.criterionId ?? `criterion_${cIdx + 1}`);
+                                              const current =
+                                                manualCriterionScoreByResultId[transcript.resultId]?.[criterionId] ??
+                                                Number(cs?.score) ??
+                                                0;
+                                              return (
+                                                <div key={criterionId} className="flex items-center gap-2">
+                                                  <span className="text-xs text-slate-700 min-w-40 truncate">
+                                                    {cs?.criterionName || `Criterion ${cIdx + 1}`}
+                                                  </span>
+                                                  <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={Number(cs?.maxScore) || 0}
+                                                    step={0.5}
+                                                    value={current}
+                                                    onChange={(e) =>
+                                                      setManualCriterionScore(
+                                                        transcript.resultId,
+                                                        criterionId,
+                                                        Number(e.target.value || 0),
+                                                      )
+                                                    }
+                                                    className="w-24 rounded-md border border-input bg-white px-2 py-1 text-xs"
+                                                  />
+                                                  <span className="text-xs text-muted-foreground">/ {Number(cs?.maxScore) || 0}</span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : transcriptSummary ? (
+                                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 relative">
+                                  <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    <Sparkles className="w-4 h-4" /> AI Feedback on this Result
+                                  </h5>
+                                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{transcriptSummary}</p>
+                                </div>
+                              ) : null}
+
+                              {essayAnswers.length > 0 ? (
+                                <div className="space-y-3">
+                                  <h5 className="text-sm font-bold text-slate-800">Student Essay Response</h5>
+                                  {essayAnswers.map((q: any, qIdx: number) => (
+                                    <div key={qIdx} className="rounded-xl border border-slate-200 bg-white p-4">
+                                      <div className="font-semibold text-slate-800 mb-2">{q.text || `Essay Question ${qIdx + 1}`}</div>
+                                      <div className="text-xs tracking-wider uppercase font-semibold text-slate-500 mb-1">Submitted Response</div>
+                                      <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto pr-1">{q.studentAnswer}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+
                               {transcript.resultId ? (
-                                <button
-                                  disabled={isGenerating}
-                                  onClick={() => handleGenerateInsights(transcript.resultId)}
-                                  className="absolute top-4 right-4 text-xs font-medium bg-white text-blue-600 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors disabled:opacity-50"
-                                >
-                                  {isGenerating ? <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> : null}
-                                  Regenerate
-                                </button>
+                                <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+                                  <div className="text-xs font-bold text-violet-700 uppercase tracking-wider mb-2">Final Teacher Comment (visible to student)</div>
+                                  <textarea
+                                    className="w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[100px] resize-y"
+                                    value={
+                                      finalCommentDraftByResultId[transcript.resultId] ??
+                                      (typeof transcript.teacherFinalComment === "string" ? transcript.teacherFinalComment : "")
+                                    }
+                                    onChange={(e) =>
+                                      setFinalCommentDraftByResultId((prev) => ({
+                                        ...prev,
+                                        [transcript.resultId]: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                  <div className="mt-3 flex justify-end">
+                                    <button
+                                      type="button"
+                                      onClick={() => saveFinalComment(transcript.resultId)}
+                                      className="text-xs font-medium bg-white text-violet-700 border border-violet-200 px-3 py-1.5 rounded hover:bg-violet-100 transition-colors"
+                                    >
+                                      Save Final Comment
+                                    </button>
+                                    <div className="ml-3 flex items-center gap-2">
+                                      <span className="text-xs font-semibold text-slate-600">
+                                        Final % auto-calculated from rubric rows
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => saveFinalizedScores(transcript.resultId, writingFeedback)}
+                                        className="text-xs font-medium bg-violet-700 text-white border border-violet-700 px-3 py-1.5 rounded hover:bg-violet-800 transition-colors"
+                                      >
+                                        Finalize & Publish
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
                               ) : null}
                             </div>
-
-                            {essayAnswers.length > 0 ? (
-                              <div className="space-y-3">
-                                <h5 className="text-sm font-bold text-slate-800">Student Essay Response</h5>
-                                {essayAnswers.map((q: any, qIdx: number) => (
-                                  <div key={qIdx} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="font-semibold text-slate-800 mb-2">{q.text || `Essay Question ${qIdx + 1}`}</div>
-                                    <div className="text-xs tracking-wider uppercase font-semibold text-slate-500 mb-1">Submitted Response</div>
-                                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto pr-1">{q.studentAnswer}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-
-                            {(writingFeedback.questions || []).map((item: any, itemIdx: number) => {
-                              const grading = item?.grading;
-                              if (!grading) return null;
-                              return (
-                                <div key={item.questionId || itemIdx} className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div className="font-semibold text-slate-900">Writing Feedback</div>
-                                    <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
-                                      {grading.totalScore}/{grading.maxScore} ({Math.round(grading.percentage || 0)}%)
-                                    </span>
-                                  </div>
-
-                                  <div>
-                                    <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
-                                      Rubric &amp; criterion performance
-                                    </div>
-                                    <WritingRubricGradeView rubric={item.rubric} grading={grading} />
-                                    <p className="mt-2 text-xs text-slate-500">
-                                      “Met” means the student earned at least 70% of the points for that row; “Partial” is 40–69%; below that is “Not met”.
-                                    </p>
-                                  </div>
-
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-                                      <div className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2">Strengths</div>
-                                      {(grading.overallFeedback?.strengths || []).length > 0 ? (
-                                        <div className="space-y-2 text-sm text-slate-700">
-                                          {(grading.overallFeedback?.strengths || []).map((strength: string, strengthIdx: number) => (
-                                            <div key={strengthIdx} className="flex gap-2">
-                                              <span className="text-emerald-600 font-bold">•</span>
-                                              <span>{strength}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <div className="text-sm text-slate-500">No strength notes returned.</div>
-                                      )}
-                                    </div>
-
-                                    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-                                      <div className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">Areas of Weakness</div>
-                                      {(grading.overallFeedback?.areasForImprovement || []).length > 0 ? (
-                                        <div className="space-y-2 text-sm text-slate-700">
-                                          {(grading.overallFeedback?.areasForImprovement || []).map((area: string, areaIdx: number) => (
-                                            <div key={areaIdx} className="flex gap-2">
-                                              <span className="text-amber-600 font-bold">•</span>
-                                              <span>{area}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <div className="text-sm text-slate-500">No improvement notes returned.</div>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {grading.overallFeedback?.teacherNote ? (
-                                    <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
-                                      <div className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2">Teacher Note</div>
-                                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{grading.overallFeedback.teacherNote}</p>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : transcriptSummary ? (
-                          <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 mb-6 mt-4 relative">
-                            <h5 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-2">
-                              <Sparkles className="w-4 h-4" /> AI Feedback on this Result
-                            </h5>
-                            <p className="text-sm text-slate-700 whitespace-pre-wrap">{transcriptSummary}</p>
-                            {transcript.resultId ? (
-                              <button
-                                disabled={isGenerating}
-                                onClick={() => handleGenerateInsights(transcript.resultId)}
-                                className="absolute top-4 right-4 text-xs font-medium bg-white text-blue-600 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors disabled:opacity-50"
-                              >
-                                {isGenerating ? <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> : null}
-                                Regenerate
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <div className="bg-slate-50 border-2 border-dashed border-slate-200 p-6 rounded-xl flex flex-col items-center justify-center text-center mb-6 mt-4">
-                            <BrainCircuit className="w-8 h-8 text-slate-300 mb-3" />
-                            <p className="text-sm text-slate-600 mb-4 max-w-sm">Generate AI-powered insights to analyze this specific test result and understand the student's strengths and areas for improvement.</p>
-                            {transcript.resultId ? (
-                              <button
-                                onClick={() => handleGenerateInsights(transcript.resultId)}
-                                disabled={isGenerating}
-                                className="flex items-center justify-center gap-2 bg-linear-to-r from-blue-500 to-indigo-600 text-white px-5 py-2.5 rounded-xl font-medium hover:shadow-lg hover:shadow-blue-500/25 transition-all w-full md:w-auto disabled:opacity-70 disabled:cursor-not-allowed"
-                              >
-                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                                {isGenerating ? "Analyzing Responses..." : "Generate Test Insights"}
-                              </button>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Insights unavailable for this historical entry.</span>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="space-y-3">
-                          <h5 className="text-sm font-bold text-slate-800 mb-2">Submitted Answers</h5>
-                          {transcript.answeredQuestions?.length > 0 ? transcript.answeredQuestions.map((q: any, qIdx: number) => (
-                            <div key={qIdx} className={`p-3 rounded-lg border-l-4 text-sm ${q.isCorrect ? 'bg-emerald-50/50 border-emerald-400' : q.isCorrect === false ? 'bg-red-50/50 border-red-400' : 'bg-slate-50 border-slate-300'}`}>
-                              <div className="flex gap-2 mb-2">
-                                <span className="font-semibold shrink-0">Q{qIdx + 1}:</span>
-                                <span className="text-slate-700">{q.text || "Unknown Question"}</span>
-                              </div>
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-xs tracking-wider uppercase font-semibold text-slate-500">Skill:</span>
-                                <span className="text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-700">{q.skill || "General"}</span>
-                              </div>
-                              <div className="mt-2 space-y-3">
-                                <div>
-                                  <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Student Answer:</span>
-                                  <div className={`font-medium whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto pr-1 ${q.isCorrect === true ? 'text-emerald-700' : q.isCorrect === false ? 'text-red-700' : 'text-slate-700'}`}>
-                                    {q.studentAnswer || "No Answer"}
-                                  </div>
-                                </div>
-                                <div>
-                                  <span className="text-xs tracking-wider uppercase font-semibold text-slate-500 block mb-0.5">Correct Answer:</span>
-                                  <span className={`font-medium ${q.correctAnswer ? 'text-emerald-700' : 'text-slate-600'}`}>{q.correctAnswer || "Subjective"}</span>
-                                </div>
-                              </div>
-                            </div>
-                          )) : (
-                            <div className="text-sm text-slate-500 italic p-4 bg-slate-50 rounded-lg border border-slate-100">No answered questions recorded.</div>
-                          )}
-                        </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

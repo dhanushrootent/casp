@@ -223,6 +223,14 @@ function applyLevelDraftToCriterion(c: RubricCriterion, draft: RubricLevelDraft)
   return { ...c, levels: nextLevels };
 }
 
+function parseTeacherProvidedSources(value: string): string[] {
+  return value
+    .split(/\n|,/g)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .slice(0, 12);
+}
+
 export default function WritingGenerator() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -238,6 +246,10 @@ export default function WritingGenerator() {
   const [genre, setGenre] = useState<WritingGenre>("");
   const [manualAssessmentTitle, setManualAssessmentTitle] = useState("");
   const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [maxAttempts, setMaxAttempts] = useState(1);
+  const [dueDate, setDueDate] = useState("");
+  const [teacherProvidedSourcesInput, setTeacherProvidedSourcesInput] = useState("");
+  const [sourceDescriptionMaxWords, setSourceDescriptionMaxWords] = useState(220);
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [rubricParams, setRubricParams] = useState<RubricParams>({
@@ -280,6 +292,10 @@ export default function WritingGenerator() {
   );
 
   const topicCharCount = topic.length;
+  const teacherProvidedSources = useMemo(
+    () => parseTeacherProvidedSources(teacherProvidedSourcesInput),
+    [teacherProvidedSourcesInput],
+  );
   const canSuggestTopics = Boolean(grade && rubricType && difficulty && genre);
   const canGenerate = Boolean(
     topic.trim().length >= 10 && assessmentType && subject && grade && difficulty && rubricType && genre,
@@ -351,7 +367,9 @@ export default function WritingGenerator() {
           metadata: {
             assessmentTitle: manualAssessmentTitle || undefined,
           },
-        },
+          teacherProvidedSources: teacherProvidedSources.length > 0 ? teacherProvidedSources : undefined,
+          sourceDescriptionMaxWords: clampInt(sourceDescriptionMaxWords, 40, 500),
+        } as any,
       },
       {
         onSuccess: (data) => {
@@ -390,7 +408,9 @@ export default function WritingGenerator() {
           difficulty: difficulty as Exclude<Difficulty, "">,
           rubricType,
           genre,
-        },
+          teacherProvidedSources: teacherProvidedSources.length > 0 ? teacherProvidedSources : undefined,
+          sourceDescriptionMaxWords: clampInt(sourceDescriptionMaxWords, 40, 500),
+        } as any,
       });
 
       const finalized = {
@@ -451,14 +471,31 @@ export default function WritingGenerator() {
 
     setIsSaving(true);
     try {
+      const sourceSetToPersist =
+        finalizedTopicData &&
+        selectedPrompt &&
+        finalizedTopicData.promptText.trim() === selectedPrompt.text.trim()
+          ? finalizedTopicData.sources
+          : generated.sources;
+      const backgroundToPersist =
+        finalizedTopicData &&
+        selectedPrompt &&
+        finalizedTopicData.promptText.trim() === selectedPrompt.text.trim()
+          ? finalizedTopicData.backgroundInformation
+          : generated.backgroundInformation;
+
       const persistedPayload = {
         kind: "writing_activity_v1",
         writingPromptId: selectedPrompt.id,
-        backgroundInformation: generated.backgroundInformation,
-        sources: generated.sources,
+        backgroundInformation: backgroundToPersist || "",
+        sources: Array.isArray(sourceSetToPersist) ? sourceSetToPersist : [],
         rubric: generated.rubric,
         rubricParams,
         topic,
+        maxAttempts,
+        dueDate: dueDate || null,
+        teacherProvidedSources,
+        sourceDescriptionMaxWords: clampInt(sourceDescriptionMaxWords, 40, 500),
       };
 
       const newAssessment = await createAssessmentMutation.mutateAsync({
@@ -647,6 +684,33 @@ export default function WritingGenerator() {
                       placeholder="e.g. Civil War Writing Task"
                       value={manualAssessmentTitle}
                       onChange={(e) => setManualAssessmentTitle(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Max Attempts</label>
+                    <Input
+                      className="w-full h-11 rounded-xl"
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={maxAttempts}
+                      onChange={(e) =>
+                        setMaxAttempts(
+                          Math.max(1, Math.min(10, parseInt(e.target.value || "1", 10))),
+                        )
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Due Date (Optional)</label>
+                    <Input
+                      className="w-full h-11 rounded-xl"
+                      type="datetime-local"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
                     />
                   </div>
                 </div>
@@ -876,6 +940,40 @@ export default function WritingGenerator() {
                             setRubricParams((p) => ({ ...p, additionalInstructions: e.target.value }))
                           }
                         />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">
+                          Specific Sources for Gemini (Optional)
+                        </label>
+                        <textarea
+                          className="w-full rounded-xl border border-input bg-background px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[110px] resize-y"
+                          placeholder={"Paste source URLs/titles, one per line.\nExample:\nhttps://www.loc.gov/...\nNational Geographic: Water Scarcity"}
+                          value={teacherProvidedSourcesInput}
+                          onChange={(e) => setTeacherProvidedSourcesInput(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Gemini will prioritize these sources when generating background/context and source cards.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">
+                          Max Words per Source Description
+                        </label>
+                        <Input
+                          className="w-full h-11 rounded-xl"
+                          type="number"
+                          min={40}
+                          max={500}
+                          value={sourceDescriptionMaxWords}
+                          onChange={(e) =>
+                            setSourceDescriptionMaxWords(
+                              clampInt(parseInt(e.target.value || "220", 10), 40, 500),
+                            )
+                          }
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Limits how long each generated source description can be (40–500 words).
+                        </p>
                       </div>
                     </motion.div>
                   )}

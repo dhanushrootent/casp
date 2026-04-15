@@ -51,6 +51,8 @@ router.get("/assessments/:assessmentId", async (req: Request, res: Response) => 
 
   let rubric: unknown = null;
   let rubricParams: unknown = null;
+  let maxAttempts: number | null = null;
+  let dueDate: string | null = null;
 
   // Writing assessments persist rubric metadata in the essay question explanation payload.
   const rubricSourceQuestion = questions.find((q) => q.type === "essay") ?? questions[0];
@@ -59,16 +61,22 @@ router.get("/assessments/:assessmentId", async (req: Request, res: Response) => 
       const payload = JSON.parse(rubricSourceQuestion.explanation) as {
         rubric?: unknown;
         rubricParams?: unknown;
+        maxAttempts?: unknown;
+        dueDate?: unknown;
       };
       rubric = payload.rubric ?? null;
       rubricParams = payload.rubricParams ?? null;
+      maxAttempts = Number.isFinite(Number(payload.maxAttempts)) ? Math.max(1, Number(payload.maxAttempts)) : null;
+      dueDate = typeof payload.dueDate === "string" && payload.dueDate.trim().length > 0 ? payload.dueDate : null;
     } catch {
       rubric = null;
       rubricParams = null;
+      maxAttempts = null;
+      dueDate = null;
     }
   }
 
-  return res.json({ ...assessment, questions, rubric, rubricParams });
+  return res.json({ ...assessment, questions, rubric, rubricParams, maxAttempts: maxAttempts ?? 1, dueDate });
 });
 
 router.get("/assessments/:assessmentId/questions", async (req: Request, res: Response) => {

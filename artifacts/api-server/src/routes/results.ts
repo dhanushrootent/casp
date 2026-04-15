@@ -134,6 +134,111 @@ function extractFeedbackSummary(feedback: unknown): string {
   return feedback.trim().slice(0, 320);
 }
 
+function extractTeacherFinalComment(feedback: unknown): string | null {
+  if (typeof feedback !== "string" || feedback.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(feedback) as any;
+    const comment = typeof parsed?.teacherFinalComment === "string" ? parsed.teacherFinalComment.trim() : "";
+    return comment.length > 0 ? comment : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseFeedbackObject(feedback: unknown): any | null {
+  if (typeof feedback !== "string" || feedback.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(feedback);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractTeacherScoreFinalized(feedback: unknown): boolean {
+  const parsed = parseFeedbackObject(feedback);
+  return Boolean(parsed?.teacherScoreFinalized);
+}
+
+function extractAchievedExceptional(feedback: unknown): boolean {
+  const parsed = parseFeedbackObject(feedback);
+  return Boolean(parsed?.achievedExceptional);
+}
+
+function withTeacherFinalComment(feedback: string | null | undefined, teacherFinalComment: string | null): string {
+  const base = typeof feedback === "string" && feedback.trim().length > 0 ? feedback : "{}";
+  try {
+    const parsed = JSON.parse(base) as any;
+    const next = { ...(parsed && typeof parsed === "object" ? parsed : {}) };
+    if (teacherFinalComment && teacherFinalComment.trim().length > 0) {
+      next.teacherFinalComment = teacherFinalComment.trim();
+    } else {
+      delete next.teacherFinalComment;
+    }
+    return JSON.stringify(next);
+  } catch {
+    if (teacherFinalComment && teacherFinalComment.trim().length > 0) {
+      return JSON.stringify({ kind: "teacher_comment_v1", teacherFinalComment: teacherFinalComment.trim() });
+    }
+    return JSON.stringify({});
+  }
+}
+
+function withTeacherScoreFinalized(
+  feedback: string | null | undefined,
+  data: {
+    teacherScoreFinalized?: boolean;
+    teacherFinalComment?: string | null;
+    manualPercentage?: number | null;
+    manualScore?: number | null;
+    manualMaxScore?: number | null;
+    manualPassed?: boolean | null;
+    questions?: Array<{ questionId: string; grading: any }>;
+  },
+): string {
+  const base = typeof feedback === "string" && feedback.trim().length > 0 ? feedback : "{}";
+  try {
+    const parsed = JSON.parse(base) as any;
+    const next = { ...(parsed && typeof parsed === "object" ? parsed : {}) };
+    if (typeof data.teacherScoreFinalized === "boolean") {
+      next.teacherScoreFinalized = data.teacherScoreFinalized;
+      next.teacherScoreFinalizedAt = data.teacherScoreFinalized ? new Date().toISOString() : null;
+    }
+    if (typeof data.teacherFinalComment === "string" && data.teacherFinalComment.trim().length > 0) {
+      next.teacherFinalComment = data.teacherFinalComment.trim();
+    }
+    if (typeof data.manualPercentage === "number" && Number.isFinite(data.manualPercentage)) {
+      next.manualPercentage = data.manualPercentage;
+    }
+    if (typeof data.manualScore === "number" && Number.isFinite(data.manualScore)) {
+      next.manualScore = data.manualScore;
+    }
+    if (typeof data.manualMaxScore === "number" && Number.isFinite(data.manualMaxScore)) {
+      next.manualMaxScore = data.manualMaxScore;
+    }
+    if (typeof data.manualPassed === "boolean") {
+      next.manualPassed = data.manualPassed;
+    }
+    if (Array.isArray(data.questions)) {
+      next.questions = data.questions;
+      next.kind = "ai_writing_result_v1";
+    }
+    return JSON.stringify(next);
+  } catch {
+    return JSON.stringify({
+      kind: "teacher_score_finalization_v1",
+      teacherScoreFinalized: Boolean(data.teacherScoreFinalized),
+      teacherScoreFinalizedAt: new Date().toISOString(),
+      teacherFinalComment: data.teacherFinalComment ?? null,
+      manualPercentage: data.manualPercentage ?? null,
+      manualScore: data.manualScore ?? null,
+      manualMaxScore: data.manualMaxScore ?? null,
+      manualPassed: data.manualPassed ?? null,
+      questions: Array.isArray(data.questions) ? data.questions : [],
+    });
+  }
+}
+
 function computeSkillAreasFromTranscript(
   transcript: Array<{ score?: number; answeredQuestions?: Array<{ skill?: string; isCorrect?: boolean | null }> }>,
 ) {
@@ -207,6 +312,11 @@ SCORING RULES:
 - For each criteriaScores[].feedback, write a human-friendly rationale in 2-4 bullet-style points, focusing on specific evidence from the student's response.
 - The rationale should sound like a real teacher speaking to ${params.studentName ?? "the student"}: warm, clear, specific, and actionable (not robotic).
 - When possible, include one strength point and one improvement point in each criterion feedback.
+- Make every criterion feedback specific to THIS submission: identify exact weaknesses and explain how they affected score.
+- Include one concrete revision action per criterion that could raise score on that row.
+- For each criterion feedback, explicitly include: (1) achieved level and why, (2) one exact quote/snippet from student response, and (3) one concrete revision that would move the student to the next rubric level.
+- overallFeedback.teacherNote must be highly specific (3-5 sentences): strongest evidence, biggest scoring gap, and targeted revision plan.
+- overallFeedback.studentSummary must be specific and student-friendly (2-4 sentences), referencing at least one concrete part of the response.
 - Return only valid JSON in this exact format:
 {
   "totalScore": 0,
@@ -254,12 +364,12 @@ SCORING RULES:
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Failed to parse AI writing grade response");
   try {
-    return JSON.parse(jsonMatch[0]);
+    return ensureSpecificOverallFeedback(JSON.parse(jsonMatch[0]), params.studentName ?? "The student");
   } catch (err) {
     // One gentle repair pass for common model JSON mistakes (trailing commas).
     const repaired = jsonMatch[0].replace(/,\s*([}\]])/g, "$1");
     try {
-      return JSON.parse(repaired);
+      return ensureSpecificOverallFeedback(JSON.parse(repaired), params.studentName ?? "The student");
     } catch {
       throw err;
     }
@@ -330,6 +440,61 @@ function buildFallbackWritingGrading(params: { points: number; rubric: any; stud
   };
 }
 
+function ensureSpecificOverallFeedback(grading: any, studentName: string) {
+  const isWeakFeedback = (text: string) => {
+    const t = String(text ?? "").trim().toLowerCase();
+    if (t.length < 40) return true;
+    return /good job|needs improvement|well done|keep it up|nice work|more detail needed/.test(t);
+  };
+  const criteria = Array.isArray(grading?.criteriaScores) ? grading.criteriaScores : [];
+  const normalizedCriteria = criteria.map((c: any, idx: number) => {
+    const raw = String(c?.feedback ?? "").trim();
+    if (!isWeakFeedback(raw)) return c;
+    const criterionName = String(c?.criterionName ?? `Criterion ${idx + 1}`);
+    const level = String(c?.level ?? "Developing");
+    const quoteSnippet =
+      Array.isArray(c?.quotes) && c.quotes.length > 0
+        ? String(c.quotes[0] ?? "").trim()
+        : "";
+    return {
+      ...c,
+      feedback: [
+        `In ${criterionName}, this submission is currently at ${level}.`,
+        quoteSnippet
+          ? `Student evidence: "${quoteSnippet}".`
+          : "There is not enough direct textual evidence in the response for this rubric row.",
+        "To gain points on this criterion, add one precise supporting detail and follow it with explicit analysis that connects it to the claim.",
+      ].join(" "),
+    };
+  });
+
+  const criteriaForOverall = normalizedCriteria;
+  const first = criteriaForOverall[0] ?? null;
+  const firstQuote =
+    Array.isArray(first?.quotes) && first.quotes.length > 0
+      ? String(first.quotes[0] ?? "").trim()
+      : "";
+  const teacherNote = String(grading?.overallFeedback?.teacherNote ?? "").trim();
+  const studentSummary = String(grading?.overallFeedback?.studentSummary ?? "").trim();
+
+  return {
+    ...grading,
+    criteriaScores: criteriaForOverall,
+    overallFeedback: {
+      strengths: Array.isArray(grading?.overallFeedback?.strengths) ? grading.overallFeedback.strengths : [],
+      areasForImprovement: Array.isArray(grading?.overallFeedback?.areasForImprovement)
+        ? grading.overallFeedback.areasForImprovement
+        : [],
+      teacherNote:
+        teacherNote ||
+        `${studentName} shows potential, but scoring was limited mostly in ${first?.criterionName ?? "rubric alignment"}. The strongest current evidence is ${firstQuote ? `"${firstQuote}"` : "present but underdeveloped"}, while the biggest gap is depth of analysis and explicit evidence linkage. To raise the score, revise body paragraphs with one stronger quote/fact and one sentence explaining how it proves the claim.`,
+      studentSummary:
+        studentSummary ||
+        `You have a clear starting point${firstQuote ? `, including "${firstQuote}"` : ""}. To improve your score next attempt, use more specific evidence and explain how each example supports your main point.`,
+    },
+  };
+}
+
 function firstQueryString(value: unknown): string | undefined {
   if (typeof value === "string" && value.length > 0) return value;
   if (Array.isArray(value) && typeof value[0] === "string") return value[0];
@@ -396,10 +561,21 @@ router.get("/results", async (req: Request, res: Response) => {
 
     const assessmentMap = Object.fromEntries(assessments.map((a) => [a.id, a]));
     const studentMap = Object.fromEntries(students.map((s) => [s.id, s]));
+    const resultIds = results.map((r) => r.id);
+    let commentByResultId: Record<string, string | null> = {};
+    if (studentId && resultIds.length > 0) {
+      const feedbackRows = await db
+        .select({ id: resultsTable.id, feedback: resultsTable.feedback })
+        .from(resultsTable)
+        .where(inArray(resultsTable.id, resultIds));
+      commentByResultId = Object.fromEntries(
+        feedbackRows.map((row) => [row.id, extractTeacherFinalComment(row.feedback)]),
+      );
+    }
 
     // Do not include `feedback` here — it can be huge (JSON with full transcripts + AI payloads).
     // Listing all results with feedback caused multi-GB JSON.stringify and OOM. Use GET /results/:id for detail.
-    let enriched = results.map((r) => ({
+    let enriched: any[] = results.map((r) => ({
       id: r.id,
       assessmentId: r.assessmentId,
       assessmentTitle: assessmentMap[r.assessmentId]?.title ?? "Unknown",
@@ -410,9 +586,55 @@ router.get("/results", async (req: Request, res: Response) => {
       maxScore: Number(r.maxScore) || 0,
       percentage: Number(r.percentage) || 0,
       passed: Boolean(r.passed),
+      achievedExceptional: false,
       timeSpent: Number(r.timeSpent) || 0,
+      teacherFinalComment: commentByResultId[r.id] ?? null,
       completedAt: r.completedAt,
     }));
+
+    if (studentId) {
+      const feedbackRows =
+        resultIds.length > 0
+          ? await db
+              .select({ id: resultsTable.id, feedback: resultsTable.feedback })
+              .from(resultsTable)
+              .where(inArray(resultsTable.id, resultIds))
+          : [];
+      const releasedById = Object.fromEntries(
+        feedbackRows.map((row) => [row.id, extractTeacherScoreFinalized(row.feedback)]),
+      );
+      const exceptionalById = Object.fromEntries(
+        feedbackRows.map((row) => [row.id, extractAchievedExceptional(row.feedback)]),
+      );
+      enriched = enriched.map((r) => {
+        const released = Boolean(releasedById[r.id]);
+        return {
+          ...r,
+          scoreReleased: released,
+          achievedExceptional: Boolean(exceptionalById[r.id]),
+          score: released ? r.score : null,
+          maxScore: released ? r.maxScore : null,
+          percentage: released ? r.percentage : null,
+          passed: released ? r.passed : null,
+        };
+      });
+    } else {
+      const feedbackRows =
+        resultIds.length > 0
+          ? await db
+              .select({ id: resultsTable.id, feedback: resultsTable.feedback })
+              .from(resultsTable)
+              .where(inArray(resultsTable.id, resultIds))
+          : [];
+      const exceptionalById = Object.fromEntries(
+        feedbackRows.map((row) => [row.id, extractAchievedExceptional(row.feedback)]),
+      );
+      enriched = enriched.map((r) => ({
+        ...r,
+        scoreReleased: true,
+        achievedExceptional: Boolean(exceptionalById[r.id]),
+      }));
+    }
 
     if (classId) {
       const classStudents = students
@@ -477,6 +699,26 @@ router.post("/results", async (req: Request, res: Response) => {
     studentName: student.name,
     grade: student.grade,
   });
+
+  const payloadAttempts =
+    questions
+      .map((q) => parseWritingActivityPayload(q.explanation))
+      .find((p) => p && Number.isFinite(Number(p.maxAttempts)))
+      ?.maxAttempts ?? 1;
+  const maxAttempts = Math.max(1, Math.min(10, Number(payloadAttempts) || 1));
+  const existingAttempts = await db
+    .select({ id: resultsTable.id })
+    .from(resultsTable)
+    .where(and(eq(resultsTable.assessmentId, assessmentId), eq(resultsTable.studentId, studentId)));
+  const attemptNumber = existingAttempts.length + 1;
+  if (existingAttempts.length >= maxAttempts) {
+    return res.status(400).json({
+      error: "attempt_limit_reached",
+      message: `Maximum attempts reached (${maxAttempts}).`,
+      maxAttempts,
+      attemptsUsed: existingAttempts.length,
+    });
+  }
 
   let score = 0;
   let maxScore = 0;
@@ -716,6 +958,8 @@ router.post("/results", async (req: Request, res: Response) => {
 
   let feedback = JSON.stringify({
     kind: "student_performance_v1",
+    teacherScoreFinalized: false,
+    achievedExceptional: percentage >= 90,
     summary,
     mentorInsights,
     strengthAreas,
@@ -726,6 +970,8 @@ router.post("/results", async (req: Request, res: Response) => {
   if (answerFeedback.length > 0) {
     feedback = JSON.stringify({
       kind: "ai_writing_result_v1",
+      teacherScoreFinalized: false,
+      achievedExceptional: percentage >= 90,
       summary,
       questions: answerFeedback,
       mentorInsights,
@@ -736,6 +982,8 @@ router.post("/results", async (req: Request, res: Response) => {
   }
   feedback = JSON.stringify({
     ...(JSON.parse(feedback) as any),
+    teacherScoreFinalized: false,
+    achievedExceptional: percentage >= 90,
     detailedTranscript: performanceBrief,
   });
   console.log("[POST /api/results] feedback payload prepared", {
@@ -768,11 +1016,17 @@ router.post("/results", async (req: Request, res: Response) => {
     assessmentType: assessment.type,
     studentId: result.studentId,
     studentName: "Student",
-    score: Number(result.score) || 0,
-    maxScore: Number(result.maxScore) || 0,
-    percentage: Number(result.percentage) || 0,
-    passed: Boolean(result.passed),
+    score: null,
+    maxScore: null,
+    percentage: null,
+    passed: null,
+    scoreReleased: false,
+    achievedExceptional: percentage >= 90,
     timeSpent: Number(result.timeSpent) || 0,
+    attemptNumber,
+    maxAttempts,
+    attemptsRemaining: Math.max(0, maxAttempts - attemptNumber),
+    teacherFinalComment: extractTeacherFinalComment(result.feedback),
     completedAt: result.completedAt,
     feedback: result.feedback,
   });
@@ -812,6 +1066,9 @@ router.get("/results/:resultId", async (req: Request, res: Response) => {
     };
   }).filter(Boolean);
 
+  const scoreReleased = extractTeacherScoreFinalized(result.feedback);
+  const achievedExceptional = extractAchievedExceptional(result.feedback);
+
   return res.json({
     id: result.id,
     assessmentId: result.assessmentId,
@@ -819,11 +1076,14 @@ router.get("/results/:resultId", async (req: Request, res: Response) => {
     assessmentType: assessment?.type ?? "CAASPP",
     studentId: result.studentId,
     studentName: students[0]?.name ?? "Unknown",
-    score: Number(result.score) || 0,
-    maxScore: Number(result.maxScore) || 0,
-    percentage: Number(result.percentage) || 0,
-    passed: Boolean(result.passed),
+    score: scoreReleased ? Number(result.score) || 0 : null,
+    maxScore: scoreReleased ? Number(result.maxScore) || 0 : null,
+    percentage: scoreReleased ? Number(result.percentage) || 0 : null,
+    passed: scoreReleased ? Boolean(result.passed) : null,
+    scoreReleased,
+    achievedExceptional,
     timeSpent: Number(result.timeSpent) || 0,
+    teacherFinalComment: extractTeacherFinalComment(result.feedback),
     completedAt: result.completedAt,
     feedback: result.feedback,
     answers: answerDetails,
@@ -905,6 +1165,93 @@ ${JSON.stringify(answerDetails, null, 2)}`;
     console.error("Failed to generate AI insights:", error);
     return res.status(500).json({ error: "ai_error", message: "Failed to generate AI insights" });
   }
+});
+
+router.patch("/results/:resultId/final-comment", async (req: Request, res: Response) => {
+  const { resultId } = req.params;
+  const teacherFinalComment =
+    typeof req.body?.teacherFinalComment === "string"
+      ? req.body.teacherFinalComment.trim()
+      : "";
+
+  const results = await db.select().from(resultsTable).where(eq(resultsTable.id, resultId as string)).limit(1);
+  const result = results[0];
+  if (!result) {
+    return res.status(404).json({ error: "not_found", message: "Result not found" });
+  }
+
+  const nextFeedback = withTeacherFinalComment(result.feedback, teacherFinalComment.length > 0 ? teacherFinalComment : null);
+  const [updated] = await db
+    .update(resultsTable)
+    .set({ feedback: nextFeedback })
+    .where(eq(resultsTable.id, resultId as string))
+    .returning();
+
+  return res.json({
+    id: updated.id,
+    teacherFinalComment: extractTeacherFinalComment(updated.feedback),
+  });
+});
+
+router.patch("/results/:resultId/finalize-scores", async (req: Request, res: Response) => {
+  const { resultId } = req.params;
+  const teacherFinalComment =
+    typeof req.body?.teacherFinalComment === "string" ? req.body.teacherFinalComment.trim() : "";
+  const manualPercentageRaw = Number(req.body?.manualPercentage);
+  const manualScoreRaw = Number(req.body?.manualScore);
+  const manualMaxScoreRaw = Number(req.body?.manualMaxScore);
+  const manualQuestions = Array.isArray(req.body?.questions) ? req.body.questions : null;
+
+  const results = await db.select().from(resultsTable).where(eq(resultsTable.id, resultId as string)).limit(1);
+  const result = results[0];
+  if (!result) {
+    return res.status(404).json({ error: "not_found", message: "Result not found" });
+  }
+
+  const currentMaxScore = Number(result.maxScore) || 0;
+  const manualMaxScore = Number.isFinite(manualMaxScoreRaw) && manualMaxScoreRaw > 0 ? manualMaxScoreRaw : currentMaxScore;
+  const fallbackScore = Number(result.score) || 0;
+  const manualScore =
+    Number.isFinite(manualScoreRaw) && manualScoreRaw >= 0 ? Math.min(manualMaxScore, manualScoreRaw) : fallbackScore;
+  const manualPercentage =
+    Number.isFinite(manualPercentageRaw) && manualPercentageRaw >= 0
+      ? Math.max(0, Math.min(100, manualPercentageRaw))
+      : manualMaxScore > 0
+        ? (manualScore / manualMaxScore) * 100
+        : 0;
+  const manualPassed = manualPercentage >= 60;
+
+  const nextFeedback = withTeacherScoreFinalized(result.feedback, {
+    teacherScoreFinalized: true,
+    teacherFinalComment: teacherFinalComment.length > 0 ? teacherFinalComment : null,
+    manualPercentage,
+    manualScore,
+    manualMaxScore,
+    manualPassed,
+    questions: manualQuestions ?? undefined,
+  });
+
+  const [updated] = await db
+    .update(resultsTable)
+    .set({
+      score: manualScore,
+      maxScore: manualMaxScore,
+      percentage: manualPercentage,
+      passed: manualPassed,
+      feedback: nextFeedback,
+    })
+    .where(eq(resultsTable.id, resultId as string))
+    .returning();
+
+  return res.json({
+    id: updated.id,
+    scoreReleased: true,
+    score: Number(updated.score) || 0,
+    maxScore: Number(updated.maxScore) || 0,
+    percentage: Number(updated.percentage) || 0,
+    passed: Boolean(updated.passed),
+    teacherFinalComment: extractTeacherFinalComment(updated.feedback),
+  });
 });
 
 export default router;

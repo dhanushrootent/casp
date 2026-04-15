@@ -198,6 +198,99 @@ function clampInt(n: unknown, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
+function truncateToWordLimit(value: unknown, maxWords: number): string {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length <= maxWords) return text;
+  return `${words.slice(0, maxWords).join(" ")}...`;
+}
+
+function normalizeGradeResponse(parsed: any) {
+  const isWeakFeedback = (text: string) => {
+    const t = text.trim().toLowerCase();
+    if (t.length < 40) return true;
+    return /good job|needs improvement|well done|keep it up|nice work|more detail needed/.test(t);
+  };
+  const criteriaScores = Array.isArray(parsed?.criteriaScores)
+    ? parsed.criteriaScores.map((c: any, idx: number) => ({
+        criterionId: String(c?.criterionId ?? `criterion_${idx + 1}`),
+        criterionName: String(c?.criterionName ?? `Criterion ${idx + 1}`),
+        score: Number.isFinite(Number(c?.score)) ? Number(c.score) : 0,
+        maxScore: Number.isFinite(Number(c?.maxScore)) ? Number(c.maxScore) : 0,
+        level: String(c?.level ?? "Developing"),
+        feedback: (() => {
+          const raw = String(c?.feedback ?? "").trim();
+          if (!isWeakFeedback(raw)) return raw;
+          const criterionName = String(c?.criterionName ?? `Criterion ${idx + 1}`);
+          const level = String(c?.level ?? "Developing");
+          const quoteSnippet =
+            Array.isArray(c?.quotes) && c.quotes.length > 0
+              ? String(c.quotes[0] ?? "").trim()
+              : "";
+          return [
+            `In ${criterionName}, your current level is ${level}.`,
+            quoteSnippet
+              ? `Evidence from your response: "${quoteSnippet}".`
+              : "Your response does not yet include strong direct evidence for this rubric row.",
+            "To improve this score, revise this section with one concrete supporting detail and one explicit explanation sentence that links the detail to your main claim.",
+          ].join(" ");
+        })(),
+        quotes: Array.isArray(c?.quotes)
+          ? c.quotes.map((q: unknown) => String(q ?? "").trim()).filter((q: string) => q.length > 0).slice(0, 2)
+          : [],
+      }))
+    : [];
+
+  const strengths = Array.isArray(parsed?.overallFeedback?.strengths)
+    ? parsed.overallFeedback.strengths.map((s: unknown) => String(s ?? "").trim()).filter((s: string) => s.length > 0)
+    : [];
+  const areasForImprovement = Array.isArray(parsed?.overallFeedback?.areasForImprovement)
+    ? parsed.overallFeedback.areasForImprovement
+        .map((s: unknown) => String(s ?? "").trim())
+        .filter((s: string) => s.length > 0)
+    : [];
+
+  const teacherNoteRaw = String(parsed?.overallFeedback?.teacherNote ?? "").trim();
+  const studentSummaryRaw = String(parsed?.overallFeedback?.studentSummary ?? "").trim();
+  const firstCriterion = criteriaScores[0];
+  const firstQuote =
+    Array.isArray(firstCriterion?.quotes) && firstCriterion.quotes.length > 0
+      ? firstCriterion.quotes[0]
+      : "";
+
+  // Always return human, teacher-like observations even if the model response is sparse.
+  const teacherNote =
+    teacherNoteRaw ||
+    `Most immediate scoring driver: ${firstCriterion?.criterionName ?? "rubric alignment"}. The response needs clearer evidence and tighter organization to move from ${firstCriterion?.level ?? "current performance"} to the next level. Targeted revision: add one stronger evidence sentence and explicit analysis in each body paragraph to increase score potential.`;
+  const studentSummary =
+    studentSummaryRaw ||
+    `You have a solid start with clear ideas${firstQuote ? `, especially in "${firstQuote}"` : ""}. To raise your score, make your evidence more specific and explain how each example proves your claim.`;
+
+  return {
+    totalScore: Number.isFinite(Number(parsed?.totalScore)) ? Number(parsed.totalScore) : 0,
+    maxScore: Number.isFinite(Number(parsed?.maxScore)) ? Number(parsed.maxScore) : 0,
+    percentage: Number.isFinite(Number(parsed?.percentage)) ? Number(parsed.percentage) : 0,
+    criteriaScores,
+    overallFeedback: {
+      strengths,
+      areasForImprovement,
+      teacherNote,
+      studentSummary,
+    },
+    wordCount: Number.isFinite(Number(parsed?.wordCount)) ? Number(parsed.wordCount) : 0,
+    paragraphCount: Number.isFinite(Number(parsed?.paragraphCount)) ? Number(parsed.paragraphCount) : 0,
+    citationCount: Number.isFinite(Number(parsed?.citationCount)) ? Number(parsed.citationCount) : 0,
+    meetsRequirements: {
+      wordCount: Boolean(parsed?.meetsRequirements?.wordCount),
+      paragraphCount: Boolean(parsed?.meetsRequirements?.paragraphCount),
+      citations: Boolean(parsed?.meetsRequirements?.citations),
+      thesis: Boolean(parsed?.meetsRequirements?.thesis),
+      introConclusion: Boolean(parsed?.meetsRequirements?.introConclusion),
+    },
+  };
+}
+
 router.post("/writing/suggestions", async (req: Request, res: Response) => {
   const { grade, rubricType, difficulty, subject, assessmentType, genre } = req.body ?? {};
 
@@ -265,7 +358,7 @@ Return ONLY valid JSON in this exact format:
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         maxOutputTokens: 1024,
@@ -304,7 +397,18 @@ Return ONLY valid JSON in this exact format:
 });
 
 router.post("/writing/finalize", async (req: Request, res: Response) => {
-  const { topic, promptText, grade, subject, assessmentType, difficulty, rubricType, genre } = req.body ?? {};
+  const {
+    topic,
+    promptText,
+    grade,
+    subject,
+    assessmentType,
+    difficulty,
+    rubricType,
+    genre,
+    teacherProvidedSources,
+    sourceDescriptionMaxWords,
+  } = req.body ?? {};
   const finalPromptText =
     typeof promptText === "string" && promptText.trim().length > 0
       ? promptText.trim()
@@ -347,6 +451,10 @@ router.post("/writing/finalize", async (req: Request, res: Response) => {
     });
   }
 
+  const safeSourceDescriptionMaxWords = Number.isFinite(Number(sourceDescriptionMaxWords))
+    ? clampInt(sourceDescriptionMaxWords, 40, 500)
+    : 220;
+
   const prompt = `You are an expert California K-12 curriculum and writing support assistant.
 
 Create student-facing support materials for a writing assignment.
@@ -359,16 +467,27 @@ Context:
 - Writing Type: ${rubricType}
 - Difficulty: ${difficulty}
 - Genre: ${genre}
+- Teacher-provided source hints (prioritize these when relevant): ${
+    Array.isArray(teacherProvidedSources) && teacherProvidedSources.length > 0
+      ? JSON.stringify(
+          teacherProvidedSources.map((s: unknown) => String(s ?? "").trim()).filter((s: string) => s.length > 0),
+          null,
+          2,
+        )
+      : "(none provided)"
+  }
 
 Requirements:
 - Treat the provided final writing prompt as the exact assignment students will answer.
 - First, write "backgroundInformation" as 2 to 4 rich, age-appropriate paragraphs. It should help students understand the assignment well enough to plan an outline, write a draft, and revise into a final essay.
 - Include exactly 3 to 5 entries in "sources". Each source must be a plausible, classroom-appropriate reference type (title/author/year/url as appropriate).
+- If teacher-provided sources are listed, prefer and include them first when they are relevant and age-appropriate.
+- If a teacher-provided source is weak or irrelevant, keep it out and replace with a better source.
 - For each source, the "description" field is NOT a biography of the author and NOT generic "about the book" filler. Instead, it must:
   - Summarize and extend ideas that appear in YOUR "backgroundInformation" above (same topic, key claims, vocabulary, and angle).
   - Explain how reading or using this source would help a student understand the background context and prepare their essay.
   - Be written so a student could grasp the main background ideas relevant to that source by reading the description alone (it may briefly name the work only to anchor the reference).
-  - Be between 200 and 300 words per source (count carefully; stay within this range).
+  - Be at most ${safeSourceDescriptionMaxWords} words per source (count carefully; never exceed this limit).
   - Start with a direct, topic-specific statement. Do NOT begin with phrases like "This book", "This source", "This article", "In this book", or similar generic openers.
 
 Return ONLY valid JSON in this exact format:
@@ -379,7 +498,7 @@ Return ONLY valid JSON in this exact format:
       "title": "string",
       "author": "string (optional)",
       "year": "string (optional)",
-      "description": "string (200-300 words; ties to backgroundInformation, not author bio)",
+      "description": "string (max ${safeSourceDescriptionMaxWords} words; ties to backgroundInformation, not author bio)",
       "type": "article | book | website | primary_source | video",
       "url": "string (optional)"
     }
@@ -388,7 +507,7 @@ Return ONLY valid JSON in this exact format:
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         // Long per-source descriptions (200-300 words × several sources) plus background need headroom.
@@ -416,7 +535,7 @@ Return ONLY valid JSON in this exact format:
             title: String(s?.title ?? ""),
             author: s?.author != null ? String(s.author) : undefined,
             year: s?.year != null ? String(s.year) : undefined,
-            description: String(s?.description ?? ""),
+            description: truncateToWordLimit(s?.description, safeSourceDescriptionMaxWords),
             type: String(s?.type ?? "website"),
             url: s?.url != null ? String(s.url) : undefined,
           }))
@@ -444,6 +563,8 @@ router.post("/writing/generate", async (req: Request, res: Response) => {
     rubricParams,
     classId,
     metadata,
+    teacherProvidedSources,
+    sourceDescriptionMaxWords,
   } = req.body ?? {};
 
   if (typeof topic !== "string" || topic.trim().length < 10) {
@@ -454,6 +575,9 @@ router.post("/writing/generate", async (req: Request, res: Response) => {
   }
 
   const safePromptCount = clampInt(promptCount, 1, 5);
+  const safeSourceDescriptionMaxWords = Number.isFinite(Number(sourceDescriptionMaxWords))
+    ? clampInt(sourceDescriptionMaxWords, 40, 500)
+    : 220;
 
   const rp = rubricParams ?? {};
   const minWords = clampInt(rp.minWords, 0, 2000);
@@ -507,6 +631,15 @@ CONTEXT:
 - Prompts to generate: ${safePromptCount}
 ${customTitle ? `- Assessment Title (teacher-provided): ${customTitle}` : ""}
 ${classId ? `- Class ID (context only): ${classId}` : ""}
+- Teacher-provided source hints (prioritize these when relevant): ${
+    Array.isArray(teacherProvidedSources) && teacherProvidedSources.length > 0
+      ? JSON.stringify(
+          teacherProvidedSources.map((s: unknown) => String(s ?? "").trim()).filter((s: string) => s.length > 0),
+          null,
+          2,
+        )
+      : "(none provided)"
+  }
 
 WRITING REQUIREMENTS (rubricParams):
 - minWords: ${minWords}
@@ -523,6 +656,8 @@ QUALITY & STANDARDS:
 - All content must be age-appropriate for Grade ${grade}.
 - Align with California Common Core (or NGSS when applicable) for the provided grade and subject.
 - Sources must be plausible, real-world-style suggested references relevant to the topic.
+- If teacher-provided sources are supplied, prefer and include them first (when relevant and appropriate), then add supporting sources as needed.
+- Each source.description must be concise and useful, with a hard maximum of ${safeSourceDescriptionMaxWords} words.
 
 ${rubricCriteriaRules}
 
@@ -577,7 +712,7 @@ Additional constraints:
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         maxOutputTokens: 8192,
@@ -627,7 +762,7 @@ Additional constraints:
             title: String(s?.title ?? ""),
             author: s?.author != null ? String(s.author) : undefined,
             year: s?.year != null ? String(s.year) : undefined,
-            description: String(s?.description ?? ""),
+            description: truncateToWordLimit(s?.description, safeSourceDescriptionMaxWords),
             type: String(s?.type ?? "website"),
             url: s?.url != null ? String(s.url) : undefined,
           }))
@@ -649,6 +784,7 @@ router.post("/writing/grade", async (req: Request, res: Response) => {
     studentResponse,
     writingPrompt,
     backgroundInformation,
+    sources,
     rubric,
     rubricParams,
     grade,
@@ -682,6 +818,9 @@ ${writingPrompt}
 BACKGROUND INFORMATION (provided to student):
 ${typeof backgroundInformation === "string" ? backgroundInformation : ""}
 
+SOURCES PROVIDED TO STUDENT (must be used while evaluating evidence quality and source alignment):
+${JSON.stringify(Array.isArray(sources) ? sources : [], null, 2)}
+
 RUBRIC (score strictly against these criteria and their levels; do not invent criteria or levels):
 ${JSON.stringify(rubric, null, 2)}
 
@@ -693,8 +832,15 @@ ${studentResponse}
 
 SCORING RULES:
 - You MUST score strictly against the rubric levels provided.
+- You MUST evaluate whether the student response aligns with the provided background information and sources (accuracy, relevance, and evidence usage).
 - Provide 1–2 direct quotes from the student response per criterion to justify the score.
-- Use grade-appropriate feedback language.
+- Use warm, human, teacher-like language in complete sentences.
+- Avoid robotic phrasing and generic filler.
+- Make every criterion feedback specific to THIS submission: name the exact weakness and explain how it affected that criterion's score.
+- For each criterion, include at least one concrete "what to change" action the student could do to gain points on that exact row.
+- For each criterion feedback, explicitly include: (1) achieved level and why, (2) one exact quote/snippet from student response, and (3) one concrete revision that would move the student to the next rubric level.
+- overallFeedback.teacherNote must be highly specific (3-5 sentences): strongest evidence in submission, biggest scoring gap, and precise revision plan that would increase score.
+- overallFeedback.studentSummary must be specific and student-friendly (2-4 sentences), referencing at least one concrete part of the student's response.
 - Compute wordCount, paragraphCount (paragraphs separated by blank lines), and citationCount (count occurrences of bracket citations like [1] or parenthetical citations like (Author, 2020) — best-effort heuristic).
 - Determine meetsRequirements booleans for: wordCount, paragraphCount, citations, thesis, introConclusion.
 
@@ -734,7 +880,7 @@ Return ONLY valid JSON in this exact format:
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         maxOutputTokens: 8192,
@@ -752,7 +898,7 @@ Return ONLY valid JSON in this exact format:
       });
     }
 
-    return res.json(parsed);
+    return res.json(normalizeGradeResponse(parsed));
   } catch (error) {
     console.error("[POST /api/writing/grade] Failed:", error);
     return res.status(500).json({

@@ -416,12 +416,13 @@ export default function AssessmentDetail() {
                                       studentResponse: st.studentResponse,
                                       writingPrompt: q.text,
                                       backgroundInformation: payload.backgroundInformation ?? "",
+                                      sources: Array.isArray(payload.sources) ? payload.sources : [],
                                       rubric,
                                       rubricParams: payload.rubricParams,
                                       grade: (assessment as any)?.grade ?? "",
                                       subject: (assessment as any)?.subject ?? "",
                                       studentName: st.studentName || undefined,
-                                    },
+                                    } as any,
                                   });
                                   setWritingState(q.id, { result });
                                 } catch (error) {

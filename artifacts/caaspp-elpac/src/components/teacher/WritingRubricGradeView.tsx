@@ -116,14 +116,18 @@ export function WritingRubricGradeView({ rubric, grading, className = "" }: Prop
         <tbody>
           {rows.map(({ key, criterion, cs, maxPts, sc, perf }) => {
             const quotes = Array.isArray(cs?.quotes) ? cs!.quotes!.filter((q) => typeof q === "string" && q.trim().length > 0) : [];
-            const note = typeof cs?.feedback === "string" ? cs.feedback.trim() : "";
+            const noteRaw = typeof cs?.feedback === "string" ? cs.feedback.trim() : "";
+            const note =
+              noteRaw.length > 0
+                ? noteRaw
+                : `${criterion.name ?? "This criterion"} is currently marked as ${perf.label.toLowerCase()} (${cs?.level ?? "no level provided"}). Review the student's response for stronger direct evidence aligned to this rubric row.`;
             const notePoints = note
               ? note
                   .split(/\n+/)
                   .map((line) => line.replace(/^[\s\-*•\d.)]+/, "").trim())
                   .filter((line) => line.length > 0)
               : [];
-            const hasJustification = quotes.length > 0 || note.length > 0;
+            const hasJustification = true;
 
             return (
               <React.Fragment key={key}>
@@ -209,11 +213,7 @@ export function WritingRubricGradeView({ rubric, grading, className = "" }: Prop
                               </div>
                             ) : null}
                           </>
-                        ) : (
-                          <p className="text-xs italic text-slate-500">
-                            No quoted lines or rationale were returned for this criterion. Try re-running grading if the model omitted evidence.
-                          </p>
-                        )}
+                        ) : null}
                       </div>
                     </details>
                   </td>

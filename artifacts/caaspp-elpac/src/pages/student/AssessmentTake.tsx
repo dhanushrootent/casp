@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useRoute } from 'wouter';
 import { Button, Card, CardContent } from '@/components/ui';
-import { Clock, ChevronRight, ChevronLeft, CheckCircle2, Sparkles, Loader2 } from 'lucide-react';
+import { Clock, ChevronRight, ChevronLeft, CheckCircle2, Sparkles, Loader2, Bold, Italic, Underline, List, ListOrdered } from 'lucide-react';
 import { formatTime } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AudioPlayer } from '@/components/ui/audio-player';
 import { WritingRubricGradeView } from '@/components/teacher/WritingRubricGradeView';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
-import { useGetAssessment, getGetAssessmentQueryKey, useSubmitResult, useGetResult, getGetResultQueryKey } from '@workspace/api-client-react';
+import { useGetAssessment, getGetAssessmentQueryKey, useSubmitResult, useGetResult, getGetResultQueryKey, useListResults } from '@workspace/api-client-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 
@@ -41,6 +42,91 @@ function parseStoredFeedback(feedback: unknown): any | null {
   }
 }
 
+function htmlToPlainText(html: string): string {
+  if (typeof document === 'undefined') return html;
+  const withBreaks = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n');
+  const el = document.createElement('div');
+  el.innerHTML = withBreaks;
+  return (el.textContent ?? '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function RichTextEditor({
+  value,
+  disabled,
+  placeholder,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  placeholder?: string;
+  onChange: (nextHtml: string, nextPlainText: string) => void;
+}) {
+  const editorRef = React.useRef<HTMLDivElement | null>(null);
+  const resizeEditor = React.useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(180, el.scrollHeight)}px`;
+  }, []);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+    if (editorRef.current.innerHTML !== value) {
+      editorRef.current.innerHTML = value || '';
+    }
+    resizeEditor();
+  }, [value, resizeEditor]);
+
+  const applyCommand = (cmd: string) => {
+    if (disabled) return;
+    editorRef.current?.focus();
+    document.execCommand(cmd);
+    const html = editorRef.current?.innerHTML ?? '';
+    resizeEditor();
+    onChange(html, htmlToPlainText(html));
+  };
+
+  return (
+    <div className="rounded-xl border-2 border-border bg-white">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border p-2">
+        <button type="button" className="rounded-md border border-border p-2 text-muted-foreground hover:bg-muted disabled:opacity-50" onClick={() => applyCommand('bold')} disabled={disabled} aria-label="Bold">
+          <Bold className="h-4 w-4" />
+        </button>
+        <button type="button" className="rounded-md border border-border p-2 text-muted-foreground hover:bg-muted disabled:opacity-50" onClick={() => applyCommand('italic')} disabled={disabled} aria-label="Italic">
+          <Italic className="h-4 w-4" />
+        </button>
+        <button type="button" className="rounded-md border border-border p-2 text-muted-foreground hover:bg-muted disabled:opacity-50" onClick={() => applyCommand('underline')} disabled={disabled} aria-label="Underline">
+          <Underline className="h-4 w-4" />
+        </button>
+        <button type="button" className="rounded-md border border-border p-2 text-muted-foreground hover:bg-muted disabled:opacity-50" onClick={() => applyCommand('insertUnorderedList')} disabled={disabled} aria-label="Bulleted list">
+          <List className="h-4 w-4" />
+        </button>
+        <button type="button" className="rounded-md border border-border p-2 text-muted-foreground hover:bg-muted disabled:opacity-50" onClick={() => applyCommand('insertOrderedList')} disabled={disabled} aria-label="Numbered list">
+          <ListOrdered className="h-4 w-4" />
+        </button>
+      </div>
+      <div
+        ref={editorRef}
+        contentEditable={!disabled}
+        suppressContentEditableWarning
+        data-placeholder={placeholder || 'Type your answer here...'}
+        onInput={(e) => {
+          const html = (e.currentTarget as HTMLDivElement).innerHTML;
+          resizeEditor();
+          onChange(html, htmlToPlainText(html));
+        }}
+        className="w-full p-5 text-lg leading-relaxed outline-none overflow-hidden [&:empty:before]:text-muted-foreground [&:empty:before]:content-[attr(data-placeholder)]"
+        style={{ minHeight: 180 }}
+      />
+    </div>
+  );
+}
+
 export default function AssessmentTake() {
   const [, params] = useRoute('/student/assessment/:id');
   const id = params?.id as string;
@@ -55,14 +141,26 @@ export default function AssessmentTake() {
   });
 
   const submitMutation = useSubmitResult();
+  const { data: priorResults } = useListResults({
+    studentId: user?.id ?? '',
+    assessmentId: id,
+  });
 
   const [currentIdx, setCurrentIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [richAnswers, setRichAnswers] = useState<Record<string, string>>({});
   const [checkedAnswers, setCheckedAnswers] = useState<Record<string, boolean>>({});
   const [timeLeft, setTimeLeft] = useState(0);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [resultId, setResultId] = useState<string | null>(null);
+  const [submittedResultImmediate, setSubmittedResultImmediate] = useState<any | null>(null);
   const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
+  const [examStarted, setExamStarted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [violationCount, setViolationCount] = useState(0);
+  const [isSecurityBlocked, setIsSecurityBlocked] = useState(false);
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
+  const maxViolations = 3;
   const { data: submittedResult, isLoading: isLoadingSubmittedResult } = useGetResult(resultId || '', {
     query: {
       queryKey: getGetResultQueryKey(resultId || ''),
@@ -90,6 +188,13 @@ export default function AssessmentTake() {
   const writingPayload = parseWritingActivityPayload(currentQ?.explanation);
   const rubricData = (assessment as any)?.rubric ?? writingPayload?.rubric ?? null;
   const progress = ((currentIdx) / (questions.length || 1)) * 100;
+  const maxAttempts = Math.max(1, Number((assessment as any)?.maxAttempts) || 1);
+  const dueDateRaw = typeof (assessment as any)?.dueDate === 'string' ? (assessment as any).dueDate : '';
+  const dueDate = dueDateRaw ? new Date(dueDateRaw) : null;
+  const isPastDue = dueDate ? dueDate.getTime() < Date.now() : false;
+  const attemptsUsed = Array.isArray(priorResults) ? priorResults.length : 0;
+  const attemptsRemaining = Math.max(0, maxAttempts - attemptsUsed);
+  const canSubmitAttempt = attemptsRemaining > 0;
 
   useEffect(() => {
     setSelectedSourceIdx(0);
@@ -105,6 +210,56 @@ export default function AssessmentTake() {
     setCheckedAnswers(prev => ({ ...prev, [currentQ.id]: true }));
   };
 
+  const requestExamFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        setIsFullscreen(true);
+        return true;
+      }
+      await document.documentElement.requestFullscreen();
+      setIsFullscreen(true);
+      return true;
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: 'Fullscreen required',
+        description: 'Please allow fullscreen to start this assessment.',
+      });
+      return false;
+    }
+  };
+
+  const handleStartAssessment = async () => {
+    if (isPastDue) {
+      toast({
+        variant: 'destructive',
+        title: 'Assessment closed',
+        description: 'This assessment is past its due date and can no longer be started.',
+      });
+      return;
+    }
+    const ok = await requestExamFullscreen();
+    if (!ok) return;
+    setExamStarted(true);
+    setIsSecurityBlocked(false);
+  };
+
+  const handleQuitAssessment = async () => {
+    setShowQuitConfirm(true);
+  };
+
+  const confirmQuitAssessment = async () => {
+    setShowQuitConfirm(false);
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        // Ignore fullscreen exit errors.
+      }
+    }
+    window.location.href = '/student/dashboard';
+  };
+
   const handleSubmit = async () => {
     if (!user || !assessment) return;
 
@@ -117,6 +272,22 @@ export default function AssessmentTake() {
     const timeSpent = (assessment.duration * 60) - timeLeft;
 
     try {
+      if (!canSubmitAttempt) {
+        toast({
+          variant: "destructive",
+          title: "No attempts remaining",
+          description: `You have used all ${maxAttempts} attempt(s) for this assessment.`,
+        });
+        return;
+      }
+      if (isPastDue) {
+        toast({
+          variant: "destructive",
+          title: "Assessment closed",
+          description: "The due date has passed. Submissions are no longer accepted.",
+        });
+        return;
+      }
       const result = await submitMutation.mutateAsync({
         data: {
           assessmentId: assessment.id,
@@ -125,8 +296,16 @@ export default function AssessmentTake() {
           timeSpent
         }
       });
+      setSubmittedResultImmediate(result as any);
       setResultId((result as any).id);
       setIsSubmitted(true);
+      if (document.fullscreenElement) {
+        try {
+          await document.exitFullscreen();
+        } catch {
+          // Ignore fullscreen exit errors on submit completion.
+        }
+      }
       toast({
         title: "Assessment Submitted",
         description: "Your responses have been successfully recorded."
@@ -140,6 +319,74 @@ export default function AssessmentTake() {
     }
   };
 
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      if (examStarted && !isSubmitted && !active) {
+        setIsSecurityBlocked(true);
+        setViolationCount((prev) => prev + 1);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, [examStarted, isSubmitted]);
+
+  useEffect(() => {
+    if (!examStarted || isSubmitted) return;
+
+    const registerViolation = (reason: string) => {
+      setViolationCount((prev) => {
+        const next = prev + 1;
+        toast({
+          variant: 'destructive',
+          title: 'Security violation detected',
+          description: `${reason}. Violation ${next}/${maxViolations}.`,
+        });
+        if (next >= maxViolations) {
+          toast({
+            variant: 'destructive',
+            title: 'Assessment auto-submitted',
+            description: 'Maximum security violations reached.',
+          });
+          void handleSubmit();
+        }
+        return next;
+      });
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        registerViolation('Leaving the assessment window is not allowed');
+        setIsSecurityBlocked(true);
+      }
+    };
+
+    const onWindowBlur = () => {
+      registerViolation('Switching away from the assessment is not allowed');
+      setIsSecurityBlocked(true);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const blocked =
+        e.key === 'F11' ||
+        e.key === 'Escape' ||
+        ((e.ctrlKey || e.metaKey) && ['p', 's', 't', 'n', 'w'].includes(e.key.toLowerCase()));
+      if (!blocked) return;
+      e.preventDefault();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', onWindowBlur);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [examStarted, isSubmitted, toast]);
+
   if (isLoading) {
     return <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">Loading assessment...</div>;
   }
@@ -149,12 +396,20 @@ export default function AssessmentTake() {
   }
 
   if (isSubmitted) {
-    const storedFeedback = parseStoredFeedback((submittedResult as any)?.feedback);
+    const effectiveResult = (submittedResult as any) ?? submittedResultImmediate;
+    const scoreReleased = Boolean((effectiveResult as any)?.scoreReleased);
+    const achievedExceptional = Boolean((effectiveResult as any)?.achievedExceptional);
+    const storedFeedback = parseStoredFeedback(effectiveResult?.feedback);
     const writingFeedback = storedFeedback?.kind === 'ai_writing_result_v1' ? storedFeedback : null;
     const summary =
       typeof storedFeedback?.summary === 'string'
         ? storedFeedback.summary
-        : (typeof (submittedResult as any)?.feedback === 'string' ? (submittedResult as any).feedback : 'Your result has been recorded.');
+        : (typeof effectiveResult?.feedback === 'string' ? effectiveResult.feedback : 'Your result has been recorded.');
+    const submitAttemptNumber = Number((effectiveResult as any)?.attemptNumber) || Math.max(1, attemptsUsed);
+    const submitAttemptsRemaining =
+      Number((effectiveResult as any)?.attemptsRemaining) >= 0
+        ? Number((effectiveResult as any)?.attemptsRemaining)
+        : Math.max(0, maxAttempts - submitAttemptNumber);
     return (
       <div className="min-h-screen bg-gray-50 p-4 md:p-6">
         <div className="max-w-6xl mx-auto space-y-4">
@@ -167,11 +422,28 @@ export default function AssessmentTake() {
                 <div>
                   <h2 className="text-2xl font-display font-bold">Assessment Complete!</h2>
                   <p className="text-sm text-muted-foreground">Great job completing {assessment.title}.</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Attempt {submitAttemptNumber} of {maxAttempts} • Remaining: {submitAttemptsRemaining}
+                  </p>
+                  {achievedExceptional ? (
+                    <p className="mt-2 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                      You performed exceptionally well on this assessment. Another attempt is not necessary unless your teacher asks for one.
+                    </p>
+                  ) : null}
                 </div>
               </div>
-              <Button variant="outline" onClick={() => window.location.href = '/student/dashboard'}>
-                Return to Dashboard
-              </Button>
+              <div className="flex gap-2">
+                {submitAttemptsRemaining > 0 && !achievedExceptional ? (
+                  <Button
+                    onClick={() => window.location.href = `/student/assessment/${assessment.id}`}
+                  >
+                    Retry Attempt
+                  </Button>
+                ) : null}
+                <Button variant="outline" onClick={() => window.location.href = '/student/dashboard'}>
+                  Return to Dashboard
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
@@ -190,6 +462,16 @@ export default function AssessmentTake() {
                   </h5>
                   <p className="text-sm text-slate-700 whitespace-pre-wrap">{summary}</p>
                 </div>
+                {(effectiveResult as any)?.teacherFinalComment ? (
+                  <div className="bg-violet-50/70 p-4 rounded-xl border border-violet-200">
+                    <h5 className="text-xs font-bold text-violet-700 uppercase tracking-wider mb-2">
+                      Teacher Final Comment
+                    </h5>
+                    <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                      {(effectiveResult as any).teacherFinalComment}
+                    </p>
+                  </div>
+                ) : null}
 
                 {writingFeedback?.questions?.map((item: any, itemIdx: number) => {
                   const grading = item?.grading;
@@ -198,10 +480,56 @@ export default function AssessmentTake() {
                     <div key={item.questionId || itemIdx} className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="font-semibold text-slate-900">Writing Feedback</div>
-                        <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
-                          {grading.totalScore}/{grading.maxScore} ({Math.round(grading.percentage || 0)}%)
-                        </span>
+                        {scoreReleased ? (
+                          <span className="text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                            {grading.totalScore}/{grading.maxScore} ({Math.round(grading.percentage || 0)}%)
+                          </span>
+                        ) : (
+                          <span className="text-xs font-semibold bg-amber-50 text-amber-700 px-3 py-1 rounded-full border border-amber-200">
+                            Scores pending teacher finalization
+                          </span>
+                        )}
                       </div>
+                      {(grading?.overallFeedback?.strengths?.length || grading?.overallFeedback?.areasForImprovement?.length) ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                            <div className="text-xs font-bold uppercase tracking-wider text-emerald-700 mb-2">What you did well</div>
+                            {Array.isArray(grading?.overallFeedback?.strengths) && grading.overallFeedback.strengths.length > 0 ? (
+                              <div className="space-y-1.5 text-sm text-slate-700">
+                                {grading.overallFeedback.strengths.map((s: string, i: number) => (
+                                  <div key={i} className="flex gap-2">
+                                    <span className="text-emerald-700 font-bold">•</span>
+                                    <span>{s}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-slate-500">No specific strengths were returned.</div>
+                            )}
+                          </div>
+                          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                            <div className="text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">What to improve next</div>
+                            {Array.isArray(grading?.overallFeedback?.areasForImprovement) && grading.overallFeedback.areasForImprovement.length > 0 ? (
+                              <div className="space-y-1.5 text-sm text-slate-700">
+                                {grading.overallFeedback.areasForImprovement.map((s: string, i: number) => (
+                                  <div key={i} className="flex gap-2">
+                                    <span className="text-amber-700 font-bold">•</span>
+                                    <span>{s}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-slate-500">No specific improvements were returned.</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                      {typeof grading?.overallFeedback?.studentSummary === 'string' && grading.overallFeedback.studentSummary.trim().length > 0 ? (
+                        <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                          <div className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2">AI Observation</div>
+                          <p className="text-sm text-slate-700 whitespace-pre-wrap">{grading.overallFeedback.studentSummary}</p>
+                        </div>
+                      ) : null}
                       <WritingRubricGradeView rubric={item.rubric} grading={grading} />
                     </div>
                   );
@@ -209,8 +537,8 @@ export default function AssessmentTake() {
 
                 <div className="space-y-3">
                   <h5 className="text-sm font-bold text-slate-800">Submitted Answers</h5>
-                  {Array.isArray((submittedResult as any)?.answers) && (submittedResult as any).answers.length > 0 ? (
-                    (submittedResult as any).answers.map((q: any, qIdx: number) => (
+                  {Array.isArray(effectiveResult?.answers) && effectiveResult.answers.length > 0 ? (
+                    effectiveResult.answers.map((q: any, qIdx: number) => (
                       <div key={qIdx} className={`p-3 rounded-lg border-l-4 text-sm ${
                         q.isCorrect === true
                           ? 'bg-emerald-50/50 border-emerald-400'
@@ -256,6 +584,77 @@ export default function AssessmentTake() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
+      <Dialog open={showQuitConfirm} onOpenChange={setShowQuitConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Quit assessment?</DialogTitle>
+            <DialogDescription>
+              Your current progress will not be submitted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQuitConfirm(false)}>
+              Continue Assessment
+            </Button>
+            <Button variant="destructive" onClick={confirmQuitAssessment}>
+              Quit Assessment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {!examStarted ? (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-2xl border-slate-200 shadow-2xl">
+            <CardContent className="p-7 space-y-5">
+              <h2 className="text-2xl font-display font-bold text-slate-900">Secure Assessment Mode</h2>
+              <p className="text-slate-700">
+                This assessment runs in fullscreen mode. Leaving fullscreen or switching tabs/apps will be logged as a security violation.
+              </p>
+              <ul className="list-disc pl-6 text-slate-700 space-y-1">
+                <li>Fullscreen is required while taking the assessment.</li>
+                <li>Switching tabs/windows can trigger auto-submit after repeated violations.</li>
+                <li>You may quit anytime, but progress will not be submitted.</li>
+              </ul>
+              <div className="flex justify-end gap-3 pt-2">
+                <Button variant="outline" onClick={handleQuitAssessment}>Quit</Button>
+                <Button onClick={handleStartAssessment} disabled={isPastDue}>Start in Fullscreen</Button>
+              </div>
+                {isPastDue ? (
+                  <p className="text-sm text-red-600 font-semibold">This assessment is past due and closed for submission.</p>
+                ) : null}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {examStarted && isSecurityBlocked && !isSubmitted ? (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-xl border-amber-200 shadow-2xl">
+            <CardContent className="p-6 space-y-4">
+              <h3 className="text-xl font-display font-bold text-slate-900">Assessment Paused</h3>
+              <p className="text-slate-700">
+                You exited fullscreen or switched away from the test. Resume fullscreen to continue.
+              </p>
+              <p className="text-sm font-semibold text-amber-700">
+                Violations: {violationCount}/{maxViolations}
+              </p>
+              <div className="flex justify-end gap-3">
+                <Button variant="outline" onClick={handleQuitAssessment}>Quit Assessment</Button>
+                <Button
+                  onClick={async () => {
+                    const ok = await requestExamFullscreen();
+                    if (ok) setIsSecurityBlocked(false);
+                  }}
+                >
+                  Resume Fullscreen
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
       {/* Header */}
       <header className="h-16 bg-white border-b border-border grid grid-cols-3 items-center px-6 sticky top-0 z-10 shadow-sm">
         <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
@@ -280,6 +679,11 @@ export default function AssessmentTake() {
 
       {/* Main Content */}
       <main className="flex-1 w-full px-4 md:px-6 py-5">
+        {dueDate ? (
+          <div className={`mb-3 rounded-lg border px-3 py-2 text-sm ${isPastDue ? 'border-red-200 bg-red-50 text-red-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
+            Due date: {dueDate.toLocaleString()}
+          </div>
+        ) : null}
         <div className="flex flex-col lg:flex-row gap-5 lg:items-stretch">
           <aside className="lg:w-[35%] lg:min-w-[340px] lg:max-w-[35%]">
             <Card className="shadow-sm border-border/60 h-full min-h-[560px]">
@@ -416,14 +820,22 @@ export default function AssessmentTake() {
             </Card>
           </section>
         </div>
+        <div className="mt-3 text-sm text-muted-foreground">
+          Attempts: {attemptsUsed}/{maxAttempts} used
+        </div>
+        <div className="mt-1 text-xs text-amber-700 font-semibold">
+          Security violations: {violationCount}/{maxViolations}
+        </div>
         {['short_answer', 'essay', 'speaking', 'listening'].includes(currentQ.type) && (
           <div className="mt-5">
-            <textarea
-              className="w-full h-44 p-5 rounded-xl border-2 border-border focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-lg resize-none disabled:opacity-75 disabled:bg-gray-50"
+            <RichTextEditor
               placeholder={currentQ.type === 'speaking' ? "Type out what you would say..." : "Type your answer here..."}
-              value={answers[currentQ.id] || ''}
+              value={richAnswers[currentQ.id] || ''}
               disabled={checkedAnswers[currentQ.id]}
-              onChange={(e) => handleAnswer(e.target.value)}
+              onChange={(nextHtml, nextPlainText) => {
+                setRichAnswers(prev => ({ ...prev, [currentQ.id]: nextHtml }));
+                handleAnswer(nextPlainText);
+              }}
             />
           </div>
         )}
@@ -442,10 +854,10 @@ export default function AssessmentTake() {
               size="lg"
               variant="accent"
               onClick={handleSubmit}
-              disabled={submitMutation.isPending}
+              disabled={submitMutation.isPending || !canSubmitAttempt || isPastDue}
               className="px-10"
             >
-              {submitMutation.isPending ? "Submitting..." : "Submit Assessment"} <CheckCircle2 className="w-5 h-5 ml-2" />
+              {submitMutation.isPending ? "Submitting..." : isPastDue ? "Past Due" : !canSubmitAttempt ? "No Attempts Left" : "Submit Assessment"} <CheckCircle2 className="w-5 h-5 ml-2" />
             </Button>
           ) : (
             <Button

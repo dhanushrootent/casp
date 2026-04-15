@@ -224,6 +224,22 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
   const feedbackByResultId = Object.fromEntries(
     results.map((rr) => [rr.id, typeof rr.feedback === "string" ? rr.feedback : ""]),
   );
+  const teacherFinalCommentByResultId = Object.fromEntries(
+    results.map((rr) => {
+      let comment: string | null = null;
+      if (typeof rr.feedback === "string" && rr.feedback.trim().length > 0) {
+        try {
+          const parsed = JSON.parse(rr.feedback) as any;
+          if (typeof parsed?.teacherFinalComment === "string" && parsed.teacherFinalComment.trim().length > 0) {
+            comment = parsed.teacherFinalComment.trim();
+          }
+        } catch {
+          comment = null;
+        }
+      }
+      return [rr.id, comment];
+    }),
+  );
   for (const r of latestByCompletedAt) {
     const stored = parseStoredPerformance(r.feedback);
     if (!stored) continue;
@@ -239,6 +255,7 @@ router.get("/analytics/student/:studentId", async (req: Request, res: Response) 
         feedback: stripRecursiveTranscriptFromFeedback(
           fullFeedback || (typeof entry?.feedback === "string" ? entry.feedback : ""),
         ),
+        teacherFinalComment: resultId ? teacherFinalCommentByResultId[resultId] : null,
       };
     });
     console.log("[GET /api/analytics/student/:studentId] using stored performance", {
