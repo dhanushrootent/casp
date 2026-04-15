@@ -13,7 +13,8 @@ import {
   Users,
   BarChart3,
   CheckCircle,
-  PenLine
+  PenLine,
+  CalendarClock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '../ui';
@@ -40,6 +41,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       { name: 'Writing Generator', path: '/teacher/writing-generator', icon: PenLine },
       { name: 'Assessments', path: '/teacher/assessments', icon: BookOpen },
       { name: 'My Students', path: '/teacher/students', icon: Users },
+      { name: 'Submission Analysis', path: '/teacher/submission-analysis', icon: CalendarClock },
     ],
     admin: [
       { name: 'Analytics', path: '/admin/dashboard', icon: BarChart3 },
