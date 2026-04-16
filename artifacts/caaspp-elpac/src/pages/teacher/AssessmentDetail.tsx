@@ -266,21 +266,67 @@ export default function AssessmentDetail() {
                     </div>
                   )}
                   
-                  {q.explanation && (
-                    <div className="mt-4 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
-                      <span className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-1 block">Explanation</span>
-                      <p className="text-sm text-blue-900/80">{q.explanation}</p>
-                    </div>
-                  )}
-
                   {(() => {
                     const payload = parseWritingPayload(q.explanation);
-                    if (!payload) return null;
+                    if (!payload) {
+                      return q.explanation ? (
+                        <div className="mt-4 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                          <span className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-1 block">Explanation</span>
+                          <p className="text-sm text-blue-900/80">{q.explanation}</p>
+                        </div>
+                      ) : null;
+                    }
                     const st = getWritingState(q.id);
                     const rubric = getEditableRubric(q.id, payload);
                     const weightSum = Math.round(calcWeightSum(rubric?.criteria || []));
                     return (
                       <div className="mt-6 p-4 rounded-xl border border-primary/15 bg-primary/5 space-y-4">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                            <div className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2">
+                              Background Information
+                            </div>
+                            <div className="text-sm text-emerald-900 whitespace-pre-line leading-relaxed">
+                              {payload.backgroundInformation || "No background information saved."}
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                            <div className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2">
+                              Student Sources
+                            </div>
+                            {Array.isArray(payload.sources) && payload.sources.length > 0 ? (
+                              <div className="space-y-3">
+                                {payload.sources.map((source: any, sourceIdx: number) => (
+                                  <div key={sourceIdx} className="rounded-lg border border-blue-100 bg-white p-3">
+                                    <div className="font-semibold text-sm text-foreground">
+                                      {source.title || `Source ${sourceIdx + 1}`}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground mb-1">
+                                      {[source.author, source.year, source.type].filter(Boolean).join(" • ")}
+                                    </div>
+                                    <div className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">
+                                      {source.description || "No description provided."}
+                                    </div>
+                                    {source.url ? (
+                                      <a
+                                        href={source.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-block mt-2 text-xs font-semibold text-primary hover:underline"
+                                      >
+                                        Open source link
+                                      </a>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-muted-foreground">No saved sources for this writing activity.</div>
+                            )}
+                          </div>
+                        </div>
+
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2">
                             <Sparkles className="w-5 h-5 text-accent" />
@@ -392,64 +438,6 @@ export default function AssessmentDetail() {
                               </tbody>
                             </table>
                           </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium mb-2">Student Name (optional)</label>
-                            <input
-                              className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                              value={st.studentName}
-                              onChange={(e) => setWritingState(q.id, { studentName: e.target.value })}
-                              placeholder="e.g. Maya"
-                            />
-                          </div>
-                          <div className="flex items-end">
-                            <Button
-                              className="w-full h-11"
-                              disabled={gradeWritingMutation.isPending || st.studentResponse.trim().length < 10}
-                              onClick={async () => {
-                                try {
-                                  setWritingState(q.id, { result: null });
-                                  const result = await gradeWritingMutation.mutateAsync({
-                                    data: {
-                                      studentResponse: st.studentResponse,
-                                      writingPrompt: q.text,
-                                      backgroundInformation: payload.backgroundInformation ?? "",
-                                      sources: Array.isArray(payload.sources) ? payload.sources : [],
-                                      rubric,
-                                      rubricParams: payload.rubricParams,
-                                      grade: (assessment as any)?.grade ?? "",
-                                      subject: (assessment as any)?.subject ?? "",
-                                      studentName: st.studentName || undefined,
-                                    } as any,
-                                  });
-                                  setWritingState(q.id, { result });
-                                } catch (error) {
-                                  console.error("Failed to grade writing response:", error);
-                                }
-                              }}
-                            >
-                              {gradeWritingMutation.isPending ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Grading...
-                                </>
-                              ) : (
-                                <>
-                                  <Sparkles className="w-4 h-4 mr-2" /> Grade This Response
-                                </>
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium mb-2">Paste Student Essay Here</label>
-                          <textarea
-                            className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[180px] resize-y"
-                            value={st.studentResponse}
-                            onChange={(e) => setWritingState(q.id, { studentResponse: e.target.value })}
-                          />
                         </div>
 
                         {st.result ? (
