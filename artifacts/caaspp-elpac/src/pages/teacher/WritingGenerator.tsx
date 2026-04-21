@@ -37,19 +37,8 @@ import {
 
 type AssessmentType = "" | "CAASPP" | "ELPAC";
 type Difficulty = "" | "easy" | "medium" | "hard" | "mixed";
-type RubricType = "" | "argumentative" | "explanatory" | "narrative" | "response" | "analysis" | "essay";
-type WritingGenre =
-  | ""
-  | "political"
-  | "geographical"
-  | "personal_experience"
-  | "historical"
-  | "scientific"
-  | "literary"
-  | "social_issue"
-  | "biographical"
-  | "cultural"
-  | "environmental";
+type RubricType = "" | "essay" | "response";
+type WritingGenre = "" | "argumentative" | "explanatory" | "narrative";
 
 type SourceType = "article" | "book" | "website" | "primary_source" | "video";
 
@@ -270,6 +259,8 @@ export default function WritingGenerator() {
   const [generated, setGenerated] = useState<WritingGenerateResult | null>(null);
   const [selectedPromptId, setSelectedPromptId] = useState<string>("");
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
+  const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>([]);
+  const [selectedSuggestedPrompt, setSelectedSuggestedPrompt] = useState<string>("");
   const [finalizedTopicData, setFinalizedTopicData] = useState<FinalizedTopicData | null>(null);
   const [rubricSplitCriterionIdx, setRubricSplitCriterionIdx] = useState<number | null>(null);
   const [rubricSplitDraft, setRubricSplitDraft] = useState<RubricLevelDraft>({
@@ -280,8 +271,15 @@ export default function WritingGenerator() {
   });
 
   const generateMutation = useGenerateWritingActivity();
+  const suggestPromptsMutation = useGenerateWritingActivity();
   const finalizeMutation = useFinalizeWritingTopic();
   const suggestTopicsMutation = useSuggestWritingTopics();
+
+  // Stable refs so the suggestion effect doesn't re-run when mutation object references change
+  const suggestPromptsMutateRef = React.useRef(suggestPromptsMutation.mutate);
+  suggestPromptsMutateRef.current = suggestPromptsMutation.mutate;
+  const suggestTopicsMutateRef = React.useRef(suggestTopicsMutation.mutate);
+  suggestTopicsMutateRef.current = suggestTopicsMutation.mutate;
   const createAssessmentMutation = useCreateAssessment();
   const addQuestionMutation = useAddQuestionToAssessment();
   const { data: classes } = useListClasses();
@@ -299,19 +297,79 @@ export default function WritingGenerator() {
     [teacherProvidedSourcesInput],
   );
   const canSuggestTopics = Boolean(grade && rubricType && difficulty && genre);
+  const canSuggestPrompts = Boolean(topic.trim().length >= 10);
   const canGenerate = Boolean(
     topic.trim().length >= 10 && assessmentType && subject && grade && difficulty && rubricType && genre,
   );
 
   useEffect(() => {
     if (phase !== "input") return;
+    const typedTopic = topic.trim();
+    if (typedTopic.length > 0) {
+      setSuggestedTopics([]);
+      if (!canSuggestPrompts) {
+        setSuggestedPrompts([]);
+        return;
+      }
+
+      const timer = window.setTimeout(() => {
+        const suggestionAssessmentType: Exclude<AssessmentType, ""> = assessmentType || "CAASPP";
+        const suggestionSubject = subject || "English Language Arts";
+        const suggestionGrade = grade || "Grade 8";
+        const suggestionDifficulty: Exclude<Difficulty, ""> = difficulty || "medium";
+        const suggestionRubricType: Exclude<RubricType, ""> = rubricType || "essay";
+        const suggestionGenre: Exclude<WritingGenre, ""> = genre || "explanatory";
+
+        suggestPromptsMutateRef.current(
+          {
+            data: {
+              topic: typedTopic,
+              grade: suggestionGrade,
+              subject: suggestionSubject,
+              assessmentType: suggestionAssessmentType,
+              difficulty: suggestionDifficulty,
+              promptCount: 3,
+              rubricType: suggestionRubricType,
+              genre: suggestionGenre,
+              rubricParams: {
+                ...rubricParams,
+                minWords: clampInt(rubricParams.minWords, 0, 2000),
+                maxWords: clampInt(rubricParams.maxWords, 0, 5000),
+                minParagraphs: clampInt(rubricParams.minParagraphs, 0, 20),
+                maxParagraphs: clampInt(rubricParams.maxParagraphs, 0, 50),
+                minCitations: clampInt(rubricParams.minCitations, 0, 20),
+                maxCitations: clampInt(rubricParams.maxCitations, 0, 50),
+              },
+            } as any,
+          },
+          {
+            onSuccess: (data) => {
+              const prompts = Array.isArray((data as any)?.writingPrompts)
+                ? (data as any).writingPrompts
+                    .map((p: any) => String(p?.text ?? "").trim())
+                    .filter((p: string) => p.length > 0)
+                    .slice(0, 5)
+                : [];
+              setSuggestedPrompts(prompts);
+            },
+            onError: () => {
+              setSuggestedPrompts([]);
+            },
+          },
+        );
+      }, 300);
+
+      return () => window.clearTimeout(timer);
+    }
+
+    setSuggestedPrompts([]);
     if (!canSuggestTopics) {
       setSuggestedTopics([]);
       return;
     }
 
     const timer = window.setTimeout(() => {
-      suggestTopicsMutation.mutate(
+      suggestTopicsMutateRef.current(
         {
           data: {
             grade,
@@ -334,7 +392,19 @@ export default function WritingGenerator() {
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [assessmentType, canSuggestTopics, difficulty, genre, grade, phase, rubricType, subject]);
+  }, [
+    assessmentType,
+    canSuggestPrompts,
+    canSuggestTopics,
+    difficulty,
+    genre,
+    grade,
+    phase,
+    rubricParams,
+    rubricType,
+    subject,
+    topic,
+  ]);
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
@@ -376,8 +446,30 @@ export default function WritingGenerator() {
       {
         onSuccess: (data) => {
           const normalizedRubric = calcPointsFromWeights(data.rubric as any);
+          let prompts: WritingPrompt[] = Array.isArray((data as any).writingPrompts)
+            ? (data as any).writingPrompts
+            : [];
+          // If teacher picked a suggested prompt, ensure it leads the list
+          if (selectedSuggestedPrompt.trim().length > 0) {
+            const pinnedId = `pinned-${Date.now()}`;
+            const pinned: WritingPrompt = {
+              id: pinnedId,
+              text: selectedSuggestedPrompt.trim(),
+              type: rubricType || "essay",
+              skill: "Writing",
+              difficulty: difficulty || "medium",
+            };
+            // Remove any AI-generated prompt that closely matches the pinned text
+            prompts = [
+              pinned,
+              ...prompts.filter(
+                (p) => p.text.trim().toLowerCase() !== selectedSuggestedPrompt.trim().toLowerCase(),
+              ),
+            ].slice(0, clampInt(promptCount, 1, 5));
+          }
           const next: WritingGenerateResult = {
             ...(data as any),
+            writingPrompts: prompts,
             rubric: normalizedRubric as any,
           };
           setGenerated(next);
@@ -591,16 +683,55 @@ export default function WritingGenerator() {
                 <div className="rounded-xl border border-primary/10 bg-white/70 p-3">
                   <div className="flex items-center justify-between gap-3 mb-2">
                     <div className="text-xs font-semibold uppercase tracking-wider text-primary/80">
-                      Suggested Topics
+                      {topic.trim().length > 0 ? "Suggested Writing Prompts" : "Suggested Topics"}
                     </div>
-                    {suggestTopicsMutation.isPending ? (
+                    {suggestTopicsMutation.isPending || suggestPromptsMutation.isPending ? (
                       <div className="flex items-center text-xs text-muted-foreground">
                         <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Gemini suggesting...
                       </div>
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {suggestedTopics.length > 0 ? (
+                    {topic.trim().length > 0 ? (
+                      suggestedPrompts.length > 0 ? (
+                        suggestedPrompts.map((suggestion, index) => {
+                          const isChosen = selectedSuggestedPrompt === suggestion;
+                          return (
+                            <button
+                              key={`${suggestion}-${index}`}
+                              type="button"
+                              className={`rounded-xl border-2 px-3 py-2 text-xs font-medium text-left w-full transition-colors ${
+                                isChosen
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-primary/20 bg-primary/5 text-primary hover:bg-primary/10"
+                              }`}
+                              onClick={() =>
+                                setSelectedSuggestedPrompt((prev) =>
+                                  prev === suggestion ? "" : suggestion,
+                                )
+                              }
+                            >
+                              <div className="flex items-start gap-2">
+                                <span
+                                  className={`mt-0.5 shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                                    isChosen ? "border-primary bg-primary" : "border-primary/30"
+                                  }`}
+                                >
+                                  {isChosen ? <Check className="w-2.5 h-2.5 text-white" /> : null}
+                                </span>
+                                {suggestion}
+                              </div>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          {canSuggestPrompts
+                            ? "No prompt suggestions yet. Keep typing your topic or wait a moment for Gemini."
+                            : "Type at least 10 characters to get writing-prompt suggestions."}
+                        </span>
+                      )
+                    ) : (
                       suggestedTopics.map((suggestion, index) => (
                         <button
                           key={`${suggestion}-${index}`}
@@ -611,13 +742,14 @@ export default function WritingGenerator() {
                           {suggestion}
                         </button>
                       ))
-                    ) : (
+                    )}
+                    {topic.trim().length === 0 && suggestedTopics.length === 0 ? (
                       <span className="text-xs text-muted-foreground">
                         {canSuggestTopics
-                          ? "No suggestions yet. Adjust the settings or wait a moment for Gemini."
+                          ? "No topic suggestions yet. Adjust the settings or wait a moment for Gemini."
                           : "Select grade, writing type, difficulty, and genre to load Gemini topic ideas."}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </CardContent>
@@ -723,32 +855,21 @@ export default function WritingGenerator() {
                       onChange={(e) => setRubricType(e.target.value as any)}
                     >
                       <option value="">Select writing type</option>
-                      <option value="argumentative">Argumentative</option>
-                      <option value="explanatory">Explanatory</option>
-                      <option value="narrative">Narrative</option>
-                      <option value="response">Response to Text</option>
-                      <option value="analysis">Analysis</option>
+                      <option value="response">Response</option>
                       <option value="essay">Essay</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Subject Type</label>
+                    <label className="block text-sm font-medium mb-2">Genre</label>
                     <select
                       className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
                       value={genre}
                       onChange={(e) => setGenre(e.target.value as any)}
                     >
                       <option value="">Select genre</option>
-                      <option value="political">Political</option>
-                      <option value="geographical">Geographical</option>
-                      <option value="personal_experience">Personal Experience</option>
-                      <option value="historical">Historical</option>
-                      <option value="scientific">Scientific</option>
-                      <option value="literary">Literary</option>
-                      <option value="social_issue">Social Issue</option>
-                      <option value="biographical">Biographical</option>
-                      <option value="cultural">Cultural</option>
-                      <option value="environmental">Environmental</option>
+                      <option value="argumentative">Argumentative</option>
+                      <option value="explanatory">Explanatory</option>
+                      <option value="narrative">Narrative</option>
                     </select>
                   </div>
                 </div>
@@ -1014,15 +1135,6 @@ export default function WritingGenerator() {
                         Successfully generated {generated.writingPrompts.length} prompts using Gemini AI
                       </span>
                     </div>
-                    <div className="flex gap-3">
-                      <Button variant="outline" onClick={handleDiscard} disabled={isSaving}>
-                        Discard
-                      </Button>
-                      <Button variant="default" onClick={handleSave} disabled={isSaving}>
-                        {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                        {isSaving ? "Saving..." : "Save Assessment"} <ArrowRight className="w-4 h-4 ml-2" />
-                      </Button>
-                    </div>
                   </div>
 
                   <Card className="overflow-hidden border-2 border-primary/10">
@@ -1130,31 +1242,38 @@ export default function WritingGenerator() {
                     </CardContent>
                   </Card>
 
-                  <Card className="overflow-hidden border-2 border-primary/10">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <BookOpen className="w-5 h-5 text-muted-foreground" /> Background Information
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        This background text will be shared with students before the writing activity. Finalize the selected prompt to replace this with prompt-specific support materials.
-                      </p>
-                      <textarea
-                        className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[180px] resize-y"
-                        value={generated.backgroundInformation}
-                        onChange={(e) =>
-                          {
+                  {finalizedTopicData ? (
+                    <Card className="overflow-hidden border-2 border-primary/10">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <BookOpen className="w-5 h-5 text-muted-foreground" /> Background Information
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          This background text will be shared with students before the writing activity.
+                        </p>
+                        <textarea
+                          className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[180px] resize-y"
+                          value={generated.backgroundInformation}
+                          onChange={(e) => {
                             const value = e.target.value;
                             setGenerated((p) => (p ? { ...p, backgroundInformation: value } : p));
                             setFinalizedTopicData((prev) =>
                               prev ? { ...prev, backgroundInformation: value } : prev,
                             );
-                          }
-                        }
-                      />
-                    </CardContent>
-                  </Card>
+                          }}
+                        />
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <div className="rounded-xl border-2 border-dashed border-primary/20 bg-primary/5 p-5 flex items-center gap-3 text-muted-foreground text-sm">
+                      <BookOpen className="w-5 h-5 shrink-0 text-primary/40" />
+                      <span>
+                        Background information will appear here once you <strong>Finalize</strong> the selected writing prompt above.
+                      </span>
+                    </div>
+                  )}
 
                   <Card className="overflow-hidden border-2 border-primary/10">
                     <CardHeader>
@@ -1608,6 +1727,16 @@ export default function WritingGenerator() {
                       </div>
                     </CardContent>
                   </Card>
+
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <Button variant="outline" onClick={handleDiscard} disabled={isSaving}>
+                      Discard
+                    </Button>
+                    <Button variant="default" onClick={handleSave} disabled={isSaving}>
+                      {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      {isSaving ? "Saving..." : "Save Assessment"} <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                  </div>
 
                 </>
               ) : null}
