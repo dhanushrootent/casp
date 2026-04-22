@@ -206,6 +206,25 @@ function truncateToWordLimit(value: unknown, maxWords: number): string {
   return `${words.slice(0, maxWords).join(" ")}...`;
 }
 
+/** Primary sources need room for citation + verbatim excerpts within the global cap (500 words). */
+function truncateSourceDescription(s: { type?: unknown; description?: unknown }, maxWords: number): string {
+  const typ = String(s?.type ?? "").toLowerCase();
+  const cap = typ === "primary_source" ? Math.min(500, Math.max(maxWords, 280)) : maxWords;
+  return truncateToWordLimit(s?.description, cap);
+}
+
+/** Injected into Gemini prompts for /writing/generate and /writing/finalize. */
+const PRIMARY_SOURCE_DOCUMENTATION_RULES = `
+PRIMARY SOURCE DOCUMENTATION (for any source with type "primary_source", or when a teacher-provided hint is clearly an archival / first-hand document):
+- Use only real, verifiable documents (for example: laws, treaties, speeches, letters, official records, census tables, museum or National Archives finding aids). Do not invent archive names, collection numbers, or fabricated direct quotes.
+- When the teacher supplied a URL or document title for a primary source, preserve that "url" and "title" exactly as given; do not substitute a different document.
+- For every "primary_source" entry, the "description" MUST use this exact three-part structure (labels and order):
+  Citation (documented): One line with full document title, author or issuing body, date of the document, and repository, collection, or stable URL when known.
+  Evidence (verbatim): One or two short excerpts in quotation marks copied verbatim from the source. If exact wording cannot be verified from public text, write: Evidence (verbatim): (exact wording not verified here) and then a single factual line labeled Paraphrase (attributed): — never invent a fake quotation.
+  Relevance: 1–2 sentences connecting this documented evidence to the assignment.
+- For non-primary types (article, book, website, video), keep descriptions concise; include verbatim quotes only when you are confident they match a public excerpt.
+`.trim();
+
 function normalizeGradeResponse(parsed: any) {
   const isWeakFeedback = (text: string) => {
     const t = text.trim().toLowerCase();
@@ -483,12 +502,15 @@ Requirements:
 - Include exactly 3 to 5 entries in "sources". Each source must be a plausible, classroom-appropriate reference type (title/author/year/url as appropriate).
 - If teacher-provided sources are listed, prefer and include them first when they are relevant and age-appropriate.
 - If a teacher-provided source is weak or irrelevant, keep it out and replace with a better source.
+- Exception: if a teacher-provided item is a primary document (or they gave a URL/title to a specific archival text), include it unless it is clearly inappropriate for the grade; do not replace it with a different primary document.
+${PRIMARY_SOURCE_DOCUMENTATION_RULES}
 - For each source, the "description" field is NOT a biography of the author and NOT generic "about the book" filler. Instead, it must:
   - Summarize and extend ideas that appear in YOUR "backgroundInformation" above (same topic, key claims, vocabulary, and angle).
   - Explain how reading or using this source would help a student understand the background context and prepare their essay.
   - Be written so a student could grasp the main background ideas relevant to that source by reading the description alone (it may briefly name the work only to anchor the reference).
   - Be at most ${safeSourceDescriptionMaxWords} words per source (count carefully; never exceed this limit).
-  - Start with a direct, topic-specific statement. Do NOT begin with phrases like "This book", "This source", "This article", "In this book", or similar generic openers.
+  - For type "primary_source", follow the PRIMARY SOURCE DOCUMENTATION rules above (citation + verbatim evidence + relevance) within the word limit; prioritize keeping the Citation and Evidence lines intact.
+  - For other types, start with a direct, topic-specific statement. Do NOT begin with phrases like "This book", "This source", "This article", "In this book", or similar generic openers.
 
 Return ONLY valid JSON in this exact format:
 {
@@ -535,7 +557,7 @@ Return ONLY valid JSON in this exact format:
             title: String(s?.title ?? ""),
             author: s?.author != null ? String(s.author) : undefined,
             year: s?.year != null ? String(s.year) : undefined,
-            description: truncateToWordLimit(s?.description, safeSourceDescriptionMaxWords),
+            description: truncateSourceDescription(s, safeSourceDescriptionMaxWords),
             type: String(s?.type ?? "website"),
             url: s?.url != null ? String(s.url) : undefined,
           }))
@@ -657,7 +679,9 @@ QUALITY & STANDARDS:
 - Align with California Common Core (or NGSS when applicable) for the provided grade and subject.
 - Sources must be plausible, real-world-style suggested references relevant to the topic.
 - If teacher-provided sources are supplied, prefer and include them first (when relevant and appropriate), then add supporting sources as needed.
-- Each source.description must be concise and useful, with a hard maximum of ${safeSourceDescriptionMaxWords} words.
+- If a teacher-provided item is a primary document (or they gave a URL/title to a specific archival text), preserve that title and URL exactly; do not swap in a different primary document.
+- Each source.description must be concise and useful, with a hard maximum of ${safeSourceDescriptionMaxWords} words for secondary sources; primary sources may use the structured format below and may run longer in the model output (still respect the word budget by prioritizing citation + evidence first).
+${PRIMARY_SOURCE_DOCUMENTATION_RULES}
 
 ${rubricCriteriaRules}
 
@@ -762,7 +786,7 @@ Additional constraints:
             title: String(s?.title ?? ""),
             author: s?.author != null ? String(s.author) : undefined,
             year: s?.year != null ? String(s.year) : undefined,
-            description: truncateToWordLimit(s?.description, safeSourceDescriptionMaxWords),
+            description: truncateSourceDescription(s, safeSourceDescriptionMaxWords),
             type: String(s?.type ?? "website"),
             url: s?.url != null ? String(s.url) : undefined,
           }))
@@ -833,6 +857,7 @@ ${studentResponse}
 SCORING RULES:
 - You MUST score strictly against the rubric levels provided.
 - You MUST evaluate whether the student response aligns with the provided background information and sources (accuracy, relevance, and evidence usage).
+- When a source is type "primary_source" or its description includes "Citation (documented):" and "Evidence (verbatim):", treat those verbatim excerpts as the documented evidence supplied to students. Compare the student's claims to that evidence; do not invent different quotations from the primary text.
 - Provide 1–2 direct quotes from the student response per criterion to justify the score.
 - Use warm, human, teacher-like language in complete sentences.
 - Avoid robotic phrasing and generic filler.

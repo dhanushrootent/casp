@@ -451,21 +451,27 @@ export default function WritingGenerator() {
             : [];
           // If teacher picked a suggested prompt, ensure it leads the list
           if (selectedSuggestedPrompt.trim().length > 0) {
-            const pinnedId = `pinned-${Date.now()}`;
-            const pinned: WritingPrompt = {
-              id: pinnedId,
-              text: selectedSuggestedPrompt.trim(),
-              type: rubricType || "essay",
-              skill: "Writing",
-              difficulty: difficulty || "medium",
-            };
-            // Remove any AI-generated prompt that closely matches the pinned text
-            prompts = [
-              pinned,
-              ...prompts.filter(
-                (p) => p.text.trim().toLowerCase() !== selectedSuggestedPrompt.trim().toLowerCase(),
-              ),
-            ].slice(0, clampInt(promptCount, 1, 5));
+            const selectedText = selectedSuggestedPrompt.trim();
+            const selectedTextLower = selectedText.toLowerCase();
+            const existingIdx = prompts.findIndex(
+              (p) => p.text.trim().toLowerCase() === selectedTextLower,
+            );
+            if (existingIdx >= 0) {
+              // Reuse AI metadata when the chosen suggestion already exists in generated prompts.
+              const [matched] = prompts.splice(existingIdx, 1);
+              prompts = [matched, ...prompts].slice(0, clampInt(promptCount, 1, 5));
+            } else {
+              const template = prompts[0];
+              const pinnedId = `pinned-${Date.now()}`;
+              const pinned: WritingPrompt = {
+                id: pinnedId,
+                text: selectedText,
+                type: template?.type || rubricType || "Essay",
+                skill: template?.skill || "Focused analysis",
+                difficulty: template?.difficulty || (difficulty ? difficulty[0].toUpperCase() + difficulty.slice(1) : "Medium"),
+              };
+              prompts = [pinned, ...prompts].slice(0, clampInt(promptCount, 1, 5));
+            }
           }
           const next: WritingGenerateResult = {
             ...(data as any),
@@ -496,6 +502,7 @@ export default function WritingGenerator() {
       const data = await finalizeMutation.mutateAsync({
         data: {
           topic: selectedPrompt.text,
+          promptText: selectedPrompt.text,
           grade,
           subject: subject || undefined,
           assessmentType: assessmentType || undefined,
@@ -1277,49 +1284,23 @@ export default function WritingGenerator() {
 
                   <Card className="overflow-hidden border-2 border-primary/10">
                     <CardHeader>
-                      <CardTitle className="flex items-center justify-between gap-3">
+                      <CardTitle className="flex items-center gap-2">
                         <span className="flex items-center gap-2">
                           <FileText className="w-5 h-5 text-muted-foreground" /> Sources
                         </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setGenerated((p) =>
-                              p
-                                ? {
-                                    ...p,
-                                    sources: [
-                                      ...p.sources,
-                                      {
-                                        title: "",
-                                        author: "",
-                                        year: "",
-                                        description: "",
-                                        type: "website",
-                                        url: "",
-                                      },
-                                    ],
-                                  }
-                                : p,
-                            )
-                          }
-                        >
-                          <Plus className="w-4 h-4 mr-2" /> Add Source
-                        </Button>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {finalizedTopicData && selectedPrompt && finalizedTopicData.promptText.trim() === selectedPrompt.text.trim() ? (
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-800">
-                          These sources were generated from the currently selected writing prompt.
-                        </div>
-                      ) : null}
-                      {generated.sources.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No sources generated yet.</div>
-                      ) : null}
-                      <div className="space-y-3">
-                        {generated.sources.map((s, idx) => (
+                        <>
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-800">
+                            These sources were generated from the currently selected writing prompt.
+                          </div>
+                          {finalizedTopicData.sources.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No sources generated yet.</div>
+                          ) : null}
+                          <div className="space-y-3">
+                            {finalizedTopicData.sources.map((s, idx) => (
                           <div key={idx} className="rounded-xl border border-border bg-white p-4 space-y-3">
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex items-center gap-2">
@@ -1330,11 +1311,16 @@ export default function WritingGenerator() {
                               <button
                                 type="button"
                                 className="text-red-500 hover:text-red-700"
-                                onClick={() =>
+                                onClick={() => {
                                   setGenerated((p) =>
                                     p ? { ...p, sources: p.sources.filter((_, i) => i !== idx) } : p,
-                                  )
-                                }
+                                  );
+                                  setFinalizedTopicData((prev) => {
+                                    if (!prev || !selectedPrompt) return prev;
+                                    if (prev.promptText.trim() !== selectedPrompt.text.trim()) return prev;
+                                    return { ...prev, sources: prev.sources.filter((_, i) => i !== idx) };
+                                  });
+                                }}
                               >
                                 <X className="w-4 h-4" />
                               </button>
@@ -1497,7 +1483,50 @@ export default function WritingGenerator() {
                               />
                             </div>
                           </div>
-                        ))}
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="rounded-xl border-2 border-dashed border-primary/20 bg-primary/5 p-5 flex items-center gap-3 text-muted-foreground text-sm">
+                          <FileText className="w-5 h-5 shrink-0 text-primary/40" />
+                          <span>
+                            Sources will appear here once you <strong>Finalize</strong> the selected writing prompt above.
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-start pt-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newSource = {
+                              title: "",
+                              author: "",
+                              year: "",
+                              description: "",
+                              type: "website" as const,
+                              url: "",
+                            };
+                            setGenerated((p) =>
+                              p
+                                ? {
+                                    ...p,
+                                    sources: [
+                                      ...p.sources,
+                                      newSource,
+                                    ],
+                                  }
+                                : p,
+                            );
+                            setFinalizedTopicData((prev) => {
+                              if (!prev || !selectedPrompt) return prev;
+                              if (prev.promptText.trim() !== selectedPrompt.text.trim()) return prev;
+                              return { ...prev, sources: [...prev.sources, newSource] };
+                            });
+                          }}
+                        >
+                          <Plus className="w-4 h-4 mr-2" /> Add Source
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>

@@ -307,6 +307,7 @@ ${params.studentResponse}
 SCORING RULES:
 - Score strictly against the rubric levels and requirements provided.
 - Evaluate how well the response uses or aligns with the provided background information and sources.
+- When a source has type "primary_source" or its description includes "Citation (documented):" and "Evidence (verbatim):", treat those verbatim excerpts as the documented evidence supplied to students. Compare the student's claims to that evidence; do not invent different quotations from the primary text.
 - Consider accuracy, relevance, evidence use, citations, organization, conventions, thesis, introduction, and conclusion where applicable.
 - Compute wordCount, paragraphCount, citationCount, and requirement booleans.
 - For each criteriaScores[].feedback, write a human-friendly rationale in 2-4 bullet-style points, focusing on specific evidence from the student's response.
