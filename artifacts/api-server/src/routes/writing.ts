@@ -3,6 +3,124 @@ import { ai } from "@workspace/integrations-gemini-ai";
 import { v4 as uuidv4 } from "uuid";
 
 const router: IRouter = Router();
+const VEO_VIDEO_MODEL = "veo-3.1-lite-generate-preview";
+const VIDEO_POLL_INTERVAL_MS = 5000;
+const VIDEO_POLL_TIMEOUT_MS = 60000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildVideoGenerationPrompt(input: {
+  assignmentPrompt: string;
+  sourceTitle: string;
+  sourceDescription: string;
+  grade: string;
+  subject?: string;
+  backgroundInformation?: string;
+}): string {
+  const safeBackground = truncateToWordLimit(input.backgroundInformation ?? "", 120);
+  const safeSourceDescription = truncateToWordLimit(input.sourceDescription, 120);
+  return `Create a short, classroom-safe educational video clip for a K-12 writing assignment.
+
+Context:
+- Grade: ${input.grade}
+- Subject: ${input.subject && input.subject.trim().length > 0 ? input.subject : "English Language Arts"}
+- Assignment prompt: ${truncateToWordLimit(input.assignmentPrompt, 140)}
+- Source title: ${input.sourceTitle}
+- Source description: ${safeSourceDescription}
+${safeBackground ? `- Background context: ${safeBackground}` : ""}
+
+Video requirements:
+- Keep visuals age-appropriate and non-violent.
+- Focus on historically/scientifically plausible details aligned with the assignment.
+- Style should look like an educational explainer reference clip.
+- Include no watermarks, logos, or overlaid text.`;
+}
+
+async function maybeGenerateVideoSourceUrl(input: {
+  source: {
+    title: string;
+    description: string;
+    type: string;
+    url?: string;
+  };
+  assignmentPrompt: string;
+  grade: string;
+  subject?: string;
+  backgroundInformation?: string;
+  teacherProvidedSources?: string[];
+}): Promise<string | undefined> {
+  if (String(input.source.type).toLowerCase() !== "video") return input.source.url;
+  const existingUrl =
+    typeof input.source.url === "string" && input.source.url.trim().length > 0
+      ? input.source.url.trim()
+      : undefined;
+  const teacherSourceSet = new Set(
+    (input.teacherProvidedSources ?? [])
+      .map((s) => String(s ?? "").trim())
+      .filter((s) => /^https?:\/\//i.test(s))
+      .map((s) => s.toLowerCase()),
+  );
+  const isTeacherProvidedUrl = existingUrl
+    ? teacherSourceSet.has(existingUrl.toLowerCase())
+    : false;
+
+  try {
+    const prompt = buildVideoGenerationPrompt({
+      assignmentPrompt: input.assignmentPrompt,
+      sourceTitle: input.source.title,
+      sourceDescription: input.source.description,
+      grade: input.grade,
+      subject: input.subject,
+      backgroundInformation: input.backgroundInformation,
+    });
+
+    let operation = await ai.models.generateVideos({
+      model: VEO_VIDEO_MODEL,
+      prompt,
+      config: { numberOfVideos: 1 },
+    });
+
+    const startedAt = Date.now();
+    while (!operation?.done && Date.now() - startedAt < VIDEO_POLL_TIMEOUT_MS) {
+      await sleep(VIDEO_POLL_INTERVAL_MS);
+      operation = await ai.operations.getVideosOperation({ operation });
+    }
+
+    if (!operation?.done) {
+      console.warn("[writing] Veo video generation timed out", {
+        model: VEO_VIDEO_MODEL,
+        sourceTitle: input.source.title,
+      });
+      return undefined;
+    }
+
+    const generatedVideo = (operation as any)?.response?.generatedVideos?.[0]?.video;
+    const maybeUri =
+      (typeof generatedVideo?.uri === "string" && generatedVideo.uri.trim().length > 0
+        ? generatedVideo.uri
+        : undefined) ??
+      (typeof generatedVideo?.downloadUri === "string" && generatedVideo.downloadUri.trim().length > 0
+        ? generatedVideo.downloadUri
+        : undefined);
+
+    if (!maybeUri) {
+      console.warn("[writing] Veo completed without a usable video URL", {
+        sourceTitle: input.source.title,
+      });
+    }
+    // Prefer generated Veo URL for AI-proposed video sources.
+    // Preserve teacher-provided links as authoritative references.
+    return isTeacherProvidedUrl ? existingUrl : maybeUri ?? existingUrl;
+  } catch (error) {
+    console.warn("[writing] Veo video generation failed, continuing without URL", {
+      sourceTitle: input.source.title,
+      error,
+    });
+    return existingUrl;
+  }
+}
 
 function safeJsonFromModelText(rawText: string): unknown {
   const cleaned = rawText
@@ -549,19 +667,40 @@ Return ONLY valid JSON in this exact format:
     }
 
     const out = parsed as any;
+    const normalizedSources = Array.isArray(out.sources)
+      ? await Promise.all(
+          out.sources.map(async (s: any) => {
+            const candidate = {
+              title: String(s?.title ?? ""),
+              author: s?.author != null ? String(s.author) : undefined,
+              year: s?.year != null ? String(s.year) : undefined,
+              description: truncateSourceDescription(s, safeSourceDescriptionMaxWords),
+              type: String(s?.type ?? "website"),
+              url: s?.url != null ? String(s.url) : undefined,
+            };
+            const generatedVideoUrl = await maybeGenerateVideoSourceUrl({
+              source: candidate,
+              assignmentPrompt: finalPromptText,
+              grade,
+              subject: typeof subject === "string" ? subject : undefined,
+              backgroundInformation:
+                typeof out.backgroundInformation === "string" ? out.backgroundInformation : undefined,
+              teacherProvidedSources: Array.isArray(teacherProvidedSources)
+                ? teacherProvidedSources.map((s: unknown) => String(s ?? ""))
+                : [],
+            });
+            return {
+              ...candidate,
+              url: generatedVideoUrl ?? candidate.url,
+            };
+          }),
+        )
+      : [];
+
     return res.json({
       backgroundInformation:
         typeof out.backgroundInformation === "string" ? out.backgroundInformation : "",
-      sources: Array.isArray(out.sources)
-        ? out.sources.map((s: any) => ({
-            title: String(s?.title ?? ""),
-            author: s?.author != null ? String(s.author) : undefined,
-            year: s?.year != null ? String(s.year) : undefined,
-            description: truncateSourceDescription(s, safeSourceDescriptionMaxWords),
-            type: String(s?.type ?? "website"),
-            url: s?.url != null ? String(s.url) : undefined,
-          }))
-        : [],
+      sources: normalizedSources,
     });
   } catch (error) {
     console.error("[POST /api/writing/finalize] Failed:", error);
@@ -766,6 +905,36 @@ Additional constraints:
         }))
       : [];
 
+    const normalizedSources = Array.isArray(out.sources)
+      ? await Promise.all(
+          out.sources.map(async (s: any) => {
+            const candidate = {
+              title: String(s?.title ?? ""),
+              author: s?.author != null ? String(s.author) : undefined,
+              year: s?.year != null ? String(s.year) : undefined,
+              description: truncateSourceDescription(s, safeSourceDescriptionMaxWords),
+              type: String(s?.type ?? "website"),
+              url: s?.url != null ? String(s.url) : undefined,
+            };
+            const generatedVideoUrl = await maybeGenerateVideoSourceUrl({
+              source: candidate,
+              assignmentPrompt: topic.trim(),
+              grade: String(grade ?? ""),
+              subject: typeof subject === "string" ? subject : undefined,
+              backgroundInformation:
+                typeof out.backgroundInformation === "string" ? out.backgroundInformation : undefined,
+              teacherProvidedSources: Array.isArray(teacherProvidedSources)
+                ? teacherProvidedSources.map((s: unknown) => String(s ?? ""))
+                : [],
+            });
+            return {
+              ...candidate,
+              url: generatedVideoUrl ?? candidate.url,
+            };
+          }),
+        )
+      : [];
+
     return res.json({
       assessmentTitle:
         (typeof customTitle === "string" && customTitle.length > 0
@@ -781,16 +950,7 @@ Additional constraints:
           : undefined) ?? `Writing activity for Grade ${grade} ${subject}`,
       backgroundInformation:
         (typeof out.backgroundInformation === "string" ? out.backgroundInformation : "") ?? "",
-      sources: Array.isArray(out.sources)
-        ? out.sources.map((s: any) => ({
-            title: String(s?.title ?? ""),
-            author: s?.author != null ? String(s.author) : undefined,
-            year: s?.year != null ? String(s.year) : undefined,
-            description: truncateSourceDescription(s, safeSourceDescriptionMaxWords),
-            type: String(s?.type ?? "website"),
-            url: s?.url != null ? String(s.url) : undefined,
-          }))
-        : [],
+      sources: normalizedSources,
       writingPrompts,
       rubric: out.rubric ?? { totalPoints: 20, criteria: [] },
     });

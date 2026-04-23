@@ -220,6 +220,47 @@ function parseTeacherProvidedSources(value: string): string[] {
     .slice(0, 12);
 }
 
+function toEmbeddableVideoUrl(url?: string): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+
+    if (host.includes("youtube.com") || host.includes("youtu.be")) {
+      if (host.includes("youtu.be")) {
+        const id = parsed.pathname.split("/").filter(Boolean)[0];
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+      if (parsed.pathname.startsWith("/shorts/")) {
+        const id = parsed.pathname.split("/")[2];
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+      const id = parsed.searchParams.get("v");
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+
+    if (host.includes("vimeo.com")) {
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      const id = segments[segments.length - 1];
+      return id && /^\d+$/.test(id) ? `https://player.vimeo.com/video/${id}` : null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isDirectVideoFileUrl(url?: string): boolean {
+  if (!url) return false;
+  const normalized = url.trim().toLowerCase();
+  if (!normalized) return false;
+  const clean = normalized.split("?")[0];
+  return [".mp4", ".webm", ".ogg", ".mov", ".m3u8"].some((ext) => clean.endsWith(ext));
+}
+
 export default function WritingGenerator() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -694,7 +735,7 @@ export default function WritingGenerator() {
                     </div>
                     {suggestTopicsMutation.isPending || suggestPromptsMutation.isPending ? (
                       <div className="flex items-center text-xs text-muted-foreground">
-                        <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Gemini suggesting...
+                        <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> AI is suggesting...
                       </div>
                     ) : null}
                   </div>
@@ -1114,7 +1155,7 @@ export default function WritingGenerator() {
                     </>
                   ) : generateMutation.isPending ? (
                     <>
-                      <Sparkles className="w-5 h-5 mr-2 animate-pulse text-yellow-300" /> Gemini AI Generating...
+                      <Sparkles className="w-5 h-5 mr-2 animate-pulse text-yellow-300" /> AI Generating...
                     </>
                   ) : (
                     <>
@@ -1139,7 +1180,7 @@ export default function WritingGenerator() {
                     <div className="flex items-center gap-3">
                       <CheckCircle2 className="w-6 h-6 text-emerald-500" />
                       <span className="font-medium">
-                        Successfully generated {generated.writingPrompts.length} prompts using Gemini AI
+                        Successfully generated {generated.writingPrompts.length} prompts using AI
                       </span>
                     </div>
                   </div>
@@ -1377,6 +1418,59 @@ export default function WritingGenerator() {
                               </div>
                             </div>
 
+                            {s.type === "video" ? (
+                              <div>
+                                <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
+                                  Video Preview
+                                </label>
+                                {(() => {
+                                  const embedUrl = toEmbeddableVideoUrl(s.url);
+                                  if (embedUrl) {
+                                    return (
+                                      <div className="rounded-xl border border-input bg-background p-2">
+                                        <div className="relative w-full overflow-hidden rounded-lg bg-black pb-[56.25%]">
+                                          <iframe
+                                            title={`Video source ${idx + 1}`}
+                                            src={embedUrl}
+                                            className="absolute inset-0 h-full w-full"
+                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                            allowFullScreen
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  if (isDirectVideoFileUrl(s.url)) {
+                                    return (
+                                      <div className="rounded-xl border border-input bg-background p-2">
+                                        <video
+                                          key={`${idx}-${s.url}`}
+                                          controls
+                                          preload="metadata"
+                                          className="w-full rounded-lg bg-black max-h-72"
+                                          src={s.url}
+                                        >
+                                          Your browser does not support video playback.
+                                        </video>
+                                      </div>
+                                    );
+                                  }
+                                  if (s.url && s.url.trim().length > 0) {
+                                    return (
+                                      <div className="text-xs text-muted-foreground rounded-xl border border-dashed border-input bg-background px-3 py-2">
+                                        This link cannot be played inline. Open it in a new tab.
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <div className="text-xs text-muted-foreground rounded-xl border border-dashed border-input bg-background px-3 py-2">
+                                      Add a video URL to preview this source.
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : null}
+
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <div>
                                 <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
@@ -1571,7 +1665,7 @@ export default function WritingGenerator() {
                               })
                             }
                           >
-                            Rebalance Weights
+                            Update Weights
                           </Button>
                         </div>
                       </CardTitle>

@@ -351,7 +351,7 @@ export default function AssessmentDetail() {
                                 setEditableRubric(q.id, applyPointsFromWeights({ ...rubric, criteria: normalized }));
                               }}
                             >
-                              Rebalance Weights
+                              Update Weights
                             </Button>
                           </div>
                           <div className="overflow-x-auto">

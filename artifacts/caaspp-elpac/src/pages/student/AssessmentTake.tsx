@@ -42,6 +42,47 @@ function parseStoredFeedback(feedback: unknown): any | null {
   }
 }
 
+function toEmbeddableVideoUrl(url?: string): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      if (host.includes('youtu.be')) {
+        const id = parsed.pathname.split('/').filter(Boolean)[0];
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+      if (parsed.pathname.startsWith('/shorts/')) {
+        const id = parsed.pathname.split('/')[2];
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+      const id = parsed.searchParams.get('v');
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+
+    if (host.includes('vimeo.com')) {
+      const segments = parsed.pathname.split('/').filter(Boolean);
+      const id = segments[segments.length - 1];
+      return id && /^\d+$/.test(id) ? `https://player.vimeo.com/video/${id}` : null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isDirectVideoFileUrl(url?: string): boolean {
+  if (!url) return false;
+  const normalized = url.trim().toLowerCase();
+  if (!normalized) return false;
+  const clean = normalized.split('?')[0];
+  return ['.mp4', '.webm', '.ogg', '.mov', '.m3u8'].some((ext) => clean.endsWith(ext));
+}
+
 function htmlToPlainText(html: string): string {
   if (typeof document === 'undefined') return html;
   const withBreaks = html
@@ -160,6 +201,8 @@ export default function AssessmentTake() {
   const [violationCount, setViolationCount] = useState(0);
   const [isSecurityBlocked, setIsSecurityBlocked] = useState(false);
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
+  const videoInteractionBypassRef = React.useRef(false);
+  const videoInteractionTimeoutRef = React.useRef<number | null>(null);
   const maxViolations = 3;
   const { data: submittedResult, isLoading: isLoadingSubmittedResult } = useGetResult(resultId || '', {
     query: {
@@ -199,6 +242,25 @@ export default function AssessmentTake() {
   useEffect(() => {
     setSelectedSourceIdx(0);
   }, [currentIdx, currentQ?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (videoInteractionTimeoutRef.current !== null) {
+        window.clearTimeout(videoInteractionTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const markVideoInteractionBypass = () => {
+    videoInteractionBypassRef.current = true;
+    if (videoInteractionTimeoutRef.current !== null) {
+      window.clearTimeout(videoInteractionTimeoutRef.current);
+    }
+    videoInteractionTimeoutRef.current = window.setTimeout(() => {
+      videoInteractionBypassRef.current = false;
+      videoInteractionTimeoutRef.current = null;
+    }, 5000);
+  };
 
   const handleAnswer = (val: string) => {
     if (!currentQ || checkedAnswers[currentQ.id]) return; // disable changing answer after checking
@@ -323,10 +385,6 @@ export default function AssessmentTake() {
     const onFullscreenChange = () => {
       const active = Boolean(document.fullscreenElement);
       setIsFullscreen(active);
-      if (examStarted && !isSubmitted && !active) {
-        setIsSecurityBlocked(true);
-        setViolationCount((prev) => prev + 1);
-      }
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
@@ -356,15 +414,11 @@ export default function AssessmentTake() {
     };
 
     const onVisibilityChange = () => {
+      if (videoInteractionBypassRef.current) return;
       if (document.hidden) {
         registerViolation('Leaving the assessment window is not allowed');
         setIsSecurityBlocked(true);
       }
-    };
-
-    const onWindowBlur = () => {
-      registerViolation('Switching away from the assessment is not allowed');
-      setIsSecurityBlocked(true);
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -377,12 +431,10 @@ export default function AssessmentTake() {
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('blur', onWindowBlur);
     window.addEventListener('keydown', onKeyDown);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('blur', onWindowBlur);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [examStarted, isSubmitted, toast]);
@@ -797,6 +849,67 @@ export default function AssessmentTake() {
                             <div className="text-sm text-gray-700 whitespace-pre-line max-h-64 overflow-y-auto pr-1">
                               {source.description}
                             </div>
+                            {source.type === "video" ? (
+                              (() => {
+                                const embedUrl = toEmbeddableVideoUrl(source.url);
+                                if (embedUrl) {
+                                  return (
+                                    <div
+                                      className="mt-3 rounded-lg border border-blue-100 bg-slate-950/95 p-2"
+                                      onPointerDown={markVideoInteractionBypass}
+                                      onFocusCapture={markVideoInteractionBypass}
+                                      onTouchStart={markVideoInteractionBypass}
+                                    >
+                                      <div className="relative w-full overflow-hidden rounded-md bg-black pb-[56.25%]">
+                                        <iframe
+                                          title={`Video source ${selectedSourceIdx + 1}`}
+                                          src={embedUrl}
+                                          className="absolute inset-0 h-full w-full"
+                                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                if (isDirectVideoFileUrl(source.url)) {
+                                  return (
+                                    <div
+                                      className="mt-3 rounded-lg border border-blue-100 bg-slate-950/95 p-2"
+                                      onPointerDown={markVideoInteractionBypass}
+                                      onFocusCapture={markVideoInteractionBypass}
+                                      onTouchStart={markVideoInteractionBypass}
+                                    >
+                                      <video
+                                        key={`${selectedSourceIdx}-${source.url}`}
+                                        controls
+                                        preload="metadata"
+                                        controlsList="nofullscreen noremoteplayback"
+                                        disablePictureInPicture
+                                        className="w-full rounded-md max-h-80 bg-black"
+                                        src={source.url}
+                                      >
+                                        Your browser does not support video playback.
+                                      </video>
+                                    </div>
+                                  );
+                                }
+
+                                if (source.url) {
+                                  return (
+                                    <div className="mt-3 text-xs text-muted-foreground rounded-lg border border-dashed border-blue-200 bg-blue-50 px-3 py-2">
+                                      This link cannot be played inline. Use the source link below.
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="mt-3 text-xs text-muted-foreground rounded-lg border border-dashed border-blue-200 bg-blue-50 px-3 py-2">
+                                    Video source selected, but no preview URL is available yet.
+                                  </div>
+                                );
+                              })()
+                            ) : null}
                             {source.url ? (
                               <a
                                 href={source.url}
