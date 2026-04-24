@@ -65,7 +65,13 @@ export default function StudentResults() {
     queries: (expandedGroup?.items ?? []).map((result: any) => ({
       queryKey: getGetResultQueryKey(result.id),
       queryFn: async () => {
-        const resp = await fetch(`${API_BASE_URL}/api/results/${result.id}`);
+        const resp = await fetch(`${API_BASE_URL}/api/results/${result.id}`, {
+          headers: {
+            accept: 'application/json',
+            // Required for ngrok free-tier tunnels to skip the browser warning HTML page.
+            'ngrok-skip-browser-warning': 'true',
+          },
+        });
         if (!resp.ok) throw new Error('Failed to load result');
         return resp.json();
       },
