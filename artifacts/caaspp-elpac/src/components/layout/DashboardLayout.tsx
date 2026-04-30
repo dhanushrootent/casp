@@ -70,22 +70,20 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         "fixed inset-y-0 left-0 z-50 flex h-screen w-72 flex-col bg-white border-r border-border shadow-xl shadow-black/5 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:shadow-none",
         isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        <div className="h-20 flex items-center px-6 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20 text-white">
-              <GraduationCap className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="font-display font-bold text-xl text-primary leading-tight">CAASPP<span className="text-accent">&</span>ELPAC</h1>
-              <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Assessment Platform</p>
-            </div>
+        <div className="relative h-32 flex items-center justify-center px-6 border-b border-border">
+          <div className="flex items-center justify-center">
+            <img
+              src="/skypt_logo.png"
+              alt="Skrypt Writing Coach"
+              className="h-[170px] w-auto object-contain mix-blend-multiply contrast-125 saturate-125 translate-y-[4px]"
+            />
           </div>
-          <button onClick={closeMobileMenu} className="ml-auto lg:hidden text-muted-foreground hover:text-foreground">
+          <button onClick={closeMobileMenu} className="absolute right-6 lg:hidden text-muted-foreground hover:text-foreground">
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-6 px-4 space-y-1.5">
+        <div className="flex-1 overflow-y-auto pt-8 pb-6 px-4 space-y-1.5">
           {navItems.map((item) => {
             const isActive = location === item.path || location.startsWith(item.path + '/');
             return (

@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ArrowLeft,
   ArrowRight,
   BookOpen,
   Check,
@@ -15,6 +16,7 @@ import {
   FileText,
   Loader2,
   Plus,
+  Settings2,
   Sparkles,
   Trash2,
   X,
@@ -39,7 +41,6 @@ type AssessmentType = "" | "CAASPP" | "ELPAC";
 type Difficulty = "" | "easy" | "medium" | "hard" | "mixed";
 type RubricType = "" | "essay" | "response";
 type WritingGenre = "" | "argumentative" | "explanatory" | "narrative";
-
 type SourceType = "article" | "book" | "website" | "primary_source" | "video";
 
 type WritingSource = {
@@ -59,12 +60,7 @@ type WritingPrompt = {
   difficulty: string;
 };
 
-type RubricLevel = {
-  score: number;
-  label: string;
-  description: string;
-};
-
+type RubricLevel = { score: number; label: string; description: string };
 type RubricCriterion = {
   id: string;
   name: string;
@@ -73,11 +69,7 @@ type RubricCriterion = {
   points: number;
   levels: RubricLevel[];
 };
-
-type WritingRubric = {
-  totalPoints: number;
-  criteria: RubricCriterion[];
-};
+type WritingRubric = { totalPoints: number; criteria: RubricCriterion[] };
 
 type RubricParams = {
   minWords: number;
@@ -106,56 +98,59 @@ type FinalizedTopicData = {
   sources: WritingSource[];
 };
 
+type WritingHighlight = {
+  id: string;
+  section: "prompt" | "background" | "source";
+  start: number;
+  end: number;
+  text: string;
+  sourceIndex?: number;
+};
+
+type RubricLevelDraft = {
+  exemplary: string;
+  proficient: string;
+  developing: string;
+  beginning: string;
+};
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
 function normalizeWeightsTo100(criteria: RubricCriterion[]): RubricCriterion[] {
-  if (criteria.length === 0) return criteria;
+  if (!criteria.length) return criteria;
   const raw = criteria.map((c) => (Number.isFinite(c.weight) ? c.weight : 0));
   const sum = raw.reduce((a, b) => a + b, 0);
   if (sum <= 0) {
     const even = Math.floor(100 / criteria.length);
-    const remainder = 100 - even * criteria.length;
-    return criteria.map((c, i) => ({
-      ...c,
-      weight: even + (i === 0 ? remainder : 0),
-    }));
+    const rem = 100 - even * criteria.length;
+    return criteria.map((c, i) => ({ ...c, weight: even + (i === 0 ? rem : 0) }));
   }
-  const scaled = raw.map((w) => (w / sum) * 100);
-  const rounded = scaled.map((w) => Math.round(w));
-  const roundedSum = rounded.reduce((a, b) => a + b, 0);
-  const delta = 100 - roundedSum;
-  const maxIdx =
-    rounded.length === 0
-      ? -1
-      : rounded.reduce((best, _, i) => (rounded[i] > rounded[best] ? i : best), 0);
-  const fixed = rounded.map((w, i) => (i === maxIdx ? w + delta : w));
-  return criteria.map((c, i) => ({ ...c, weight: fixed[i] }));
+  const rounded = raw.map((w) => Math.round((w / sum) * 100));
+  const delta = 100 - rounded.reduce((a, b) => a + b, 0);
+  const maxIdx = rounded.reduce((best, _, i) => (raw[i] > raw[best] ? i : best), 0);
+  return criteria.map((c, i) => ({ ...c, weight: rounded[i] + (i === maxIdx ? delta : 0) }));
 }
 
 function calcWeightSum(criteria: RubricCriterion[]) {
-  return criteria.reduce((sum, c) => sum + (Number.isFinite(c.weight) ? c.weight : 0), 0);
+  return criteria.reduce((s, c) => s + (Number.isFinite(c.weight) ? c.weight : 0), 0);
 }
 
 function calcPointsFromWeights(rubric: WritingRubric): WritingRubric {
-  const totalPoints = Number.isFinite(rubric.totalPoints) ? rubric.totalPoints : 20;
-  if (!rubric.criteria?.length) return { ...rubric, totalPoints, criteria: [] };
+  const total = Number.isFinite(rubric.totalPoints) ? rubric.totalPoints : 20;
+  if (!rubric.criteria?.length) return { ...rubric, totalPoints: total, criteria: [] };
   const weights = rubric.criteria.map((c) => (Number.isFinite(c.weight) ? c.weight : 0));
-  const sumWeights = weights.reduce((a, b) => a + b, 0) || 100;
-  const rawPoints = weights.map((w) => (w / sumWeights) * totalPoints);
-  const rounded = rawPoints.map((p) => Math.max(0, Math.round(p)));
-  const sumRounded = rounded.reduce((a, b) => a + b, 0);
-  const delta = totalPoints - sumRounded;
-  const maxIdx =
-    rounded.length === 0
-      ? -1
-      : rounded.reduce((best, _, i) => (weights[i] > weights[best] ? i : best), 0);
-  const fixed = rounded.map((p, i) => (i === maxIdx ? p + delta : p));
+  const sumW = weights.reduce((a, b) => a + b, 0) || 100;
+  const rounded = weights.map((w) => Math.max(0, Math.round((w / sumW) * total)));
+  const delta = total - rounded.reduce((a, b) => a + b, 0);
+  const maxIdx = weights.reduce((best, _, i) => (weights[i] > weights[best] ? i : best), 0);
   return {
     ...rubric,
-    totalPoints,
-    criteria: rubric.criteria.map((c, i) => ({ ...c, points: fixed[i] })),
+    totalPoints: total,
+    criteria: rubric.criteria.map((c, i) => ({ ...c, points: rounded[i] + (i === maxIdx ? delta : 0) })),
   };
 }
 
@@ -164,7 +159,6 @@ function newRubricCriterion(): RubricCriterion {
     typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
       ? (crypto as any).randomUUID()
       : `crit_${Math.random().toString(16).slice(2)}`;
-
   return {
     id,
     name: "New Criterion",
@@ -180,293 +174,338 @@ function newRubricCriterion(): RubricCriterion {
   };
 }
 
-type RubricLevelDraft = {
-  exemplary: string;
-  proficient: string;
-  developing: string;
-  beginning: string;
-};
-
 function criterionLevelsToDraft(c: RubricCriterion): RubricLevelDraft {
   const get = (label: string) => c.levels?.find((l) => l.label === label)?.description ?? "";
-  return {
-    exemplary: get("Exemplary"),
-    proficient: get("Proficient"),
-    developing: get("Developing"),
-    beginning: get("Beginning"),
-  };
+  return { exemplary: get("Exemplary"), proficient: get("Proficient"), developing: get("Developing"), beginning: get("Beginning") };
 }
 
 function applyLevelDraftToCriterion(c: RubricCriterion, draft: RubricLevelDraft): RubricCriterion {
   const pairs: [string, keyof RubricLevelDraft][] = [
-    ["Exemplary", "exemplary"],
-    ["Proficient", "proficient"],
-    ["Developing", "developing"],
-    ["Beginning", "beginning"],
+    ["Exemplary", "exemplary"], ["Proficient", "proficient"],
+    ["Developing", "developing"], ["Beginning", "beginning"],
   ];
-  const nextLevels = [...(c.levels || [])];
+  const next = [...(c.levels || [])];
   for (const [label, key] of pairs) {
-    const i = nextLevels.findIndex((l) => l.label === label);
-    if (i >= 0) nextLevels[i] = { ...nextLevels[i], description: draft[key] };
+    const i = next.findIndex((l) => l.label === label);
+    if (i >= 0) next[i] = { ...next[i], description: draft[key] };
   }
-  return { ...c, levels: nextLevels };
+  return { ...c, levels: next };
 }
 
 function parseTeacherProvidedSources(value: string): string[] {
-  return value
-    .split(/\n|,/g)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .slice(0, 12);
+  return value.split(/\n|,/g).map((s) => s.trim()).filter((s) => s.length > 0).slice(0, 12);
 }
 
 function toEmbeddableVideoUrl(url?: string): string | null {
-  if (!url) return null;
-  const trimmed = url.trim();
-  if (!trimmed) return null;
+  if (!url?.trim()) return null;
   try {
-    const parsed = new URL(trimmed);
-    const host = parsed.hostname.toLowerCase();
-
-    if (host.includes("youtube.com") || host.includes("youtu.be")) {
-      if (host.includes("youtu.be")) {
-        const id = parsed.pathname.split("/").filter(Boolean)[0];
-        return id ? `https://www.youtube.com/embed/${id}` : null;
-      }
-      if (parsed.pathname.startsWith("/shorts/")) {
-        const id = parsed.pathname.split("/")[2];
-        return id ? `https://www.youtube.com/embed/${id}` : null;
-      }
-      const id = parsed.searchParams.get("v");
+    const p = new URL(url.trim());
+    const h = p.hostname.toLowerCase();
+    if (h.includes("youtu.be")) {
+      const id = p.pathname.split("/").filter(Boolean)[0];
       return id ? `https://www.youtube.com/embed/${id}` : null;
     }
-
-    if (host.includes("vimeo.com")) {
-      const segments = parsed.pathname.split("/").filter(Boolean);
-      const id = segments[segments.length - 1];
+    if (h.includes("youtube.com")) {
+      if (p.pathname.startsWith("/shorts/")) return `https://www.youtube.com/embed/${p.pathname.split("/")[2]}`;
+      const id = p.searchParams.get("v");
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+    if (h.includes("vimeo.com")) {
+      const segs = p.pathname.split("/").filter(Boolean);
+      const id = segs[segs.length - 1];
       return id && /^\d+$/.test(id) ? `https://player.vimeo.com/video/${id}` : null;
     }
-
     return null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function isDirectVideoFileUrl(url?: string): boolean {
   if (!url) return false;
-  const normalized = url.trim().toLowerCase();
-  if (!normalized) return false;
-  const clean = normalized.split("?")[0];
-  return [".mp4", ".webm", ".ogg", ".mov", ".m3u8"].some((ext) => clean.endsWith(ext));
+  return [".mp4", ".webm", ".ogg", ".mov", ".m3u8"].some((ext) => url.trim().toLowerCase().split("?")[0].endsWith(ext));
 }
+
+// ─── platform libraries ──────────────────────────────────────────────────────
+
+const HISTORY_PLATFORM_LIBRARIES = [
+  "American History, 1450–1877",
+  "American History, 1877–present",
+  "American Government",
+  "American Women's History",
+  "World History, Prehistory to 1500",
+  "World History, 1500 to present",
+  "Western Civilization: Prehistory to 1500",
+  "Western Civilizations: 1500 to present",
+  "Psychology",
+  "Texas Government",
+] as const;
+
+// ─── small UI helpers ────────────────────────────────────────────────────────
+
+const SELECT_CLS = "w-full h-10 rounded-xl border border-input bg-background px-3 text-sm focus:ring-2 focus:ring-primary outline-none";
+
+function SettingSelect({
+  label, value, onChange, children,
+}: { label: string; value: string; onChange: (v: string) => void; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1 min-w-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      <select className={SELECT_CLS} value={value} onChange={(e) => onChange(e.target.value)}>
+        {children}
+      </select>
+    </div>
+  );
+}
+
+// ─── main component ──────────────────────────────────────────────────────────
 
 export default function WritingGenerator() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
-  const [topic, setTopic] = useState("");
-  const [assessmentType, setAssessmentType] = useState<AssessmentType>("");
+  // ── settings
+  const [assessmentType, setAssessmentType] = useState<AssessmentType>("CAASPP");
   const [subject, setSubject] = useState("");
   const [grade, setGrade] = useState("");
-  const [difficulty, setDifficulty] = useState<Difficulty>("");
-  const [promptCount, setPromptCount] = useState(3);
   const [rubricType, setRubricType] = useState<RubricType>("");
   const [genre, setGenre] = useState<WritingGenre>("");
+  const [difficulty, setDifficulty] = useState<Difficulty>("easy");
+
+  // ── topic
+  const [topic, setTopic] = useState("");
+  const [selectedSuggestedPrompt, setSelectedSuggestedPrompt] = useState("");
+
+  // ── platform library (History/Social Studies only)
+  const [selectedLibrary, setSelectedLibrary] = useState<string>("");
+
+  // ── optional / advanced
+  const [promptCount, setPromptCount] = useState(3);
   const [manualAssessmentTitle, setManualAssessmentTitle] = useState("");
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [selectedClassId, setSelectedClassId] = useState("");
   const [maxAttemptsInput, setMaxAttemptsInput] = useState("1");
   const [dueDate, setDueDate] = useState("");
   const [teacherProvidedSourcesInput, setTeacherProvidedSourcesInput] = useState("");
   const [sourceDescriptionMaxWordsInput, setSourceDescriptionMaxWordsInput] = useState("220");
-
+  const [showOptional, setShowOptional] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [rubricParams, setRubricParams] = useState<RubricParams>({
-    minWords: 300,
-    maxWords: 700,
-    minParagraphs: 3,
-    maxParagraphs: 6,
-    requireThesis: true,
-    requireIntroConclusion: true,
-    minCitations: 0,
-    maxCitations: 2,
+    minWords: 300, maxWords: 700, minParagraphs: 3, maxParagraphs: 6,
+    requireThesis: true, requireIntroConclusion: true, minCitations: 0, maxCitations: 2,
     additionalInstructions: "",
   });
 
+  // ── generation state
   const [phase, setPhase] = useState<"input" | "results">("input");
   const [isPreparing, setIsPreparing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [generated, setGenerated] = useState<WritingGenerateResult | null>(null);
-  const [selectedPromptId, setSelectedPromptId] = useState<string>("");
+  const [selectedPromptId, setSelectedPromptId] = useState("");
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
   const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>([]);
-  const [selectedSuggestedPrompt, setSelectedSuggestedPrompt] = useState<string>("");
   const [finalizedTopicData, setFinalizedTopicData] = useState<FinalizedTopicData | null>(null);
+  const [highlights, setHighlights] = useState<WritingHighlight[]>([]);
   const [rubricSplitCriterionIdx, setRubricSplitCriterionIdx] = useState<number | null>(null);
   const [rubricSplitDraft, setRubricSplitDraft] = useState<RubricLevelDraft>({
-    exemplary: "",
-    proficient: "",
-    developing: "",
-    beginning: "",
+    exemplary: "", proficient: "", developing: "", beginning: "",
   });
+  const sourceCardRefs = React.useRef<Record<number, HTMLDivElement | null>>({});
+  const promptTextareaRefs = React.useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const backgroundInfoRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const sourceDescriptionRefs = React.useRef<Record<number, HTMLTextAreaElement | null>>({});
 
+  const autoResizeTextarea = React.useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  const addHighlightFromSelection = React.useCallback(
+    (
+      section: WritingHighlight["section"],
+      textValue: string,
+      selectionStart: number | null | undefined,
+      selectionEnd: number | null | undefined,
+      sourceIndex?: number,
+    ) => {
+      if (selectionStart == null || selectionEnd == null) return;
+      if (selectionEnd <= selectionStart) return;
+      const snippet = textValue.slice(selectionStart, selectionEnd).trim();
+      if (!snippet) return;
+      const id =
+        typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
+          ? (crypto as any).randomUUID()
+          : `hl_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      setHighlights((prev) => [
+        ...prev,
+        { id, section, start: selectionStart, end: selectionEnd, text: snippet, sourceIndex },
+      ]);
+      toast({ title: "Highlight added", description: "This highlighted text will be shown to students." });
+    },
+    [toast],
+  );
+
+  const undoLastHighlight = React.useCallback(
+    (section: WritingHighlight["section"], sourceIndex?: number) => {
+      setHighlights((prev) => {
+        const idx = [...prev]
+          .map((h, i) => ({ h, i }))
+          .filter(({ h }) => h.section === section && (section !== "source" || h.sourceIndex === sourceIndex))
+          .map(({ i }) => i)
+          .pop();
+        if (idx == null) return prev;
+        return prev.filter((_, i) => i !== idx);
+      });
+    },
+    [],
+  );
+
+  // ── mutations
   const generateMutation = useGenerateWritingActivity();
   const suggestPromptsMutation = useGenerateWritingActivity();
   const finalizeMutation = useFinalizeWritingTopic();
   const suggestTopicsMutation = useSuggestWritingTopics();
-
-  // Stable refs so the suggestion effect doesn't re-run when mutation object references change
-  const suggestPromptsMutateRef = React.useRef(suggestPromptsMutation.mutate);
-  suggestPromptsMutateRef.current = suggestPromptsMutation.mutate;
-  const suggestTopicsMutateRef = React.useRef(suggestTopicsMutation.mutate);
-  suggestTopicsMutateRef.current = suggestTopicsMutation.mutate;
   const createAssessmentMutation = useCreateAssessment();
   const addQuestionMutation = useAddQuestionToAssessment();
   const { data: classes } = useListClasses();
 
-  const myClasses = useMemo(
-    () => classes?.filter((c) => c.teacherId === user?.id) || [],
-    [classes, user?.id],
-  );
+  const suggestPromptsMutateRef = React.useRef(suggestPromptsMutation.mutate);
+  suggestPromptsMutateRef.current = suggestPromptsMutation.mutate;
+  const suggestTopicsMutateRef = React.useRef(suggestTopicsMutation.mutate);
+  suggestTopicsMutateRef.current = suggestTopicsMutation.mutate;
 
-  const topicCharCount = topic.length;
+  const myClasses = useMemo(() => classes?.filter((c) => c.teacherId === user?.id) || [], [classes, user?.id]);
   const maxAttempts = clampInt(parseInt(maxAttemptsInput || "1", 10), 1, 10);
   const sourceDescriptionMaxWords = clampInt(parseInt(sourceDescriptionMaxWordsInput || "220", 10), 40, 500);
-  const teacherProvidedSources = useMemo(
-    () => parseTeacherProvidedSources(teacherProvidedSourcesInput),
-    [teacherProvidedSourcesInput],
-  );
-  const canSuggestTopics = Boolean(grade && rubricType && difficulty && genre);
-  const canSuggestPrompts = Boolean(topic.trim().length >= 10);
-  const canGenerate = Boolean(
-    topic.trim().length >= 10 && assessmentType && subject && grade && difficulty && rubricType && genre,
-  );
+  const teacherProvidedSources = useMemo(() => parseTeacherProvidedSources(teacherProvidedSourcesInput), [teacherProvidedSourcesInput]);
 
+  const canSuggestTopics = Boolean(subject && grade);
+  const canSuggestPrompts = topic.trim().length >= 10;
+  const canGenerate = Boolean(topic.trim().length >= 10 && assessmentType && subject && grade && difficulty && rubricType && genre);
+
+  const missingFields = useMemo(() => {
+    const m: string[] = [];
+    if (!subject) m.push("Subject");
+    if (!grade) m.push("Grade");
+    if (!rubricType) m.push("Writing Type");
+    if (!genre) m.push("Genre");
+    if (topic.trim().length < 10) m.push("Topic (≥10 chars)");
+    return m;
+  }, [subject, grade, rubricType, genre, topic]);
+
+  // ── effects: suggest topics when settings complete (no topic typed)
   useEffect(() => {
-    if (phase !== "input") return;
-    const typedTopic = topic.trim();
-    if (typedTopic.length > 0) {
-      setSuggestedTopics([]);
-      if (!canSuggestPrompts) {
-        setSuggestedPrompts([]);
-        return;
-      }
-
-      const timer = window.setTimeout(() => {
-        const suggestionAssessmentType: Exclude<AssessmentType, ""> = assessmentType || "CAASPP";
-        const suggestionSubject = subject || "English Language Arts";
-        const suggestionGrade = grade || "Grade 8";
-        const suggestionDifficulty: Exclude<Difficulty, ""> = difficulty || "medium";
-        const suggestionRubricType: Exclude<RubricType, ""> = rubricType || "essay";
-        const suggestionGenre: Exclude<WritingGenre, ""> = genre || "explanatory";
-
-        suggestPromptsMutateRef.current(
-          {
-            data: {
-              topic: typedTopic,
-              grade: suggestionGrade,
-              subject: suggestionSubject,
-              assessmentType: suggestionAssessmentType,
-              difficulty: suggestionDifficulty,
-              promptCount: 3,
-              rubricType: suggestionRubricType,
-              genre: suggestionGenre,
-              rubricParams: {
-                ...rubricParams,
-                minWords: clampInt(rubricParams.minWords, 0, 2000),
-                maxWords: clampInt(rubricParams.maxWords, 0, 5000),
-                minParagraphs: clampInt(rubricParams.minParagraphs, 0, 20),
-                maxParagraphs: clampInt(rubricParams.maxParagraphs, 0, 50),
-                minCitations: clampInt(rubricParams.minCitations, 0, 20),
-                maxCitations: clampInt(rubricParams.maxCitations, 0, 50),
-              },
-            } as any,
-          },
-          {
-            onSuccess: (data) => {
-              const prompts = Array.isArray((data as any)?.writingPrompts)
-                ? (data as any).writingPrompts
-                    .map((p: any) => String(p?.text ?? "").trim())
-                    .filter((p: string) => p.length > 0)
-                    .slice(0, 5)
-                : [];
-              setSuggestedPrompts(prompts);
-            },
-            onError: () => {
-              setSuggestedPrompts([]);
-            },
-          },
-        );
-      }, 300);
-
-      return () => window.clearTimeout(timer);
-    }
-
-    setSuggestedPrompts([]);
-    if (!canSuggestTopics) {
-      setSuggestedTopics([]);
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
+    if (phase !== "input" || topic.trim().length > 0) return;
+    if (!canSuggestTopics) { setSuggestedTopics([]); return; }
+    const libraryPrefix = selectedLibrary ? `[Platform Library: ${selectedLibrary}] ` : "";
+    const t = window.setTimeout(() => {
       suggestTopicsMutateRef.current(
         {
           data: {
             grade,
-            rubricType,
-            difficulty: difficulty as Exclude<Difficulty, "">,
-            genre,
-            subject,
-            assessmentType: assessmentType ? (assessmentType as Exclude<AssessmentType, "">) : undefined,
+            subject: libraryPrefix ? `${subject} — ${selectedLibrary}` : subject,
+            assessmentType: (assessmentType || "CAASPP") as any,
+            difficulty: (difficulty || "easy") as any,
+            rubricType: (rubricType || "essay") as any,
+            genre: (genre || "explanatory") as any,
           },
         },
-        {
-          onSuccess: (data) => {
-            setSuggestedTopics(Array.isArray((data as any)?.suggestions) ? (data as any).suggestions : []);
-          },
-          onError: () => {
-            setSuggestedTopics([]);
-          },
-        },
+        { onSuccess: (d) => setSuggestedTopics(Array.isArray((d as any)?.suggestions) ? (d as any).suggestions : []), onError: () => setSuggestedTopics([]) },
       );
     }, 350);
+    return () => window.clearTimeout(t);
+  }, [assessmentType, canSuggestTopics, difficulty, grade, phase, selectedLibrary, subject, topic]);
 
-    return () => window.clearTimeout(timer);
-  }, [
-    assessmentType,
-    canSuggestPrompts,
-    canSuggestTopics,
-    difficulty,
-    genre,
-    grade,
-    phase,
-    rubricParams,
-    rubricType,
-    subject,
-    topic,
-  ]);
+  // ── effects: suggest prompts when topic typed
+  useEffect(() => {
+    if (phase !== "input" || !canSuggestPrompts) { setSuggestedPrompts([]); return; }
+    setSuggestedTopics([]);
+    const effectiveSubject = selectedLibrary && subject === "History/Social Studies"
+      ? `${subject} — ${selectedLibrary}`
+      : (subject || "English Language Arts");
+    const t = window.setTimeout(() => {
+      suggestPromptsMutateRef.current(
+        {
+          data: {
+            topic: topic.trim(),
+            grade: grade || "8",
+            subject: effectiveSubject,
+            assessmentType: (assessmentType || "CAASPP") as any,
+            difficulty: (difficulty || "easy") as any,
+            promptCount: 3,
+            rubricType: (rubricType || "essay") as any,
+            genre: (genre || "explanatory") as any,
+            rubricParams: {
+              ...rubricParams,
+              minWords: clampInt(rubricParams.minWords, 0, 2000),
+              maxWords: clampInt(rubricParams.maxWords, 0, 5000),
+              minParagraphs: clampInt(rubricParams.minParagraphs, 0, 20),
+              maxParagraphs: clampInt(rubricParams.maxParagraphs, 0, 50),
+              minCitations: clampInt(rubricParams.minCitations, 0, 20),
+              maxCitations: clampInt(rubricParams.maxCitations, 0, 50),
+            },
+          } as any,
+        },
+        {
+          onSuccess: (d) => {
+            const prompts = Array.isArray((d as any)?.writingPrompts)
+              ? (d as any).writingPrompts.map((p: any) => String(p?.text ?? "").trim()).filter((p: string) => p.length > 0).slice(0, 5)
+              : [];
+            setSuggestedPrompts(prompts);
+          },
+          onError: () => setSuggestedPrompts([]),
+        },
+      );
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [assessmentType, canSuggestPrompts, difficulty, genre, grade, phase, rubricParams, rubricType, selectedLibrary, subject, topic]);
+
+  // ── auto-finalize when prompt is selected in results
+  const autoFinalize = React.useCallback(async (promptText: string) => {
+    if (!promptText.trim() || !grade || !difficulty || !rubricType) return;
+    try {
+      const data = await finalizeMutation.mutateAsync({
+        data: {
+          topic: promptText,
+          promptText,
+          grade,
+          subject: subject || undefined,
+          assessmentType: assessmentType || undefined,
+          difficulty: difficulty as any,
+          rubricType,
+          genre,
+          teacherProvidedSources: teacherProvidedSources.length > 0 ? teacherProvidedSources : undefined,
+          sourceDescriptionMaxWords,
+        } as any,
+      });
+      const finalized = {
+        promptText,
+        backgroundInformation: (data as any).backgroundInformation || "",
+        sources: Array.isArray((data as any).sources) ? (data as any).sources : [],
+      };
+      setFinalizedTopicData(finalized);
+      setGenerated((prev) => prev ? { ...prev, backgroundInformation: finalized.backgroundInformation, sources: finalized.sources } : prev);
+    } catch {
+      // silent — user can retry via button
+    }
+  }, [assessmentType, difficulty, finalizeMutation, genre, grade, rubricType, sourceDescriptionMaxWords, subject, teacherProvidedSources]);
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
     setIsPreparing(true);
-    try {
-      await new Promise((r) => setTimeout(r, 450));
-    } finally {
-      setIsPreparing(false);
-    }
+    try { await new Promise((r) => setTimeout(r, 450)); } finally { setIsPreparing(false); }
+
+    const effectiveSubjectForGenerate = selectedLibrary && subject === "History/Social Studies"
+      ? `${subject} — ${selectedLibrary}`
+      : subject;
 
     generateMutation.mutate(
       {
         data: {
-          topic,
-          grade,
-          subject,
-          assessmentType: assessmentType as Exclude<AssessmentType, "">,
-          difficulty: difficulty as Exclude<Difficulty, "">,
+          topic, grade, subject: effectiveSubjectForGenerate,
+          assessmentType: assessmentType as any,
+          difficulty: difficulty as any,
           promptCount: clampInt(promptCount, 1, 5),
-          rubricType,
-          genre,
+          rubricType, genre,
           rubricParams: {
             ...rubricParams,
             minWords: clampInt(rubricParams.minWords, 0, 2000),
@@ -477,9 +516,7 @@ export default function WritingGenerator() {
             maxCitations: clampInt(rubricParams.maxCitations, 0, 50),
           },
           ...(selectedClassId ? { classId: selectedClassId } : {}),
-          metadata: {
-            assessmentTitle: manualAssessmentTitle || undefined,
-          },
+          metadata: { assessmentTitle: manualAssessmentTitle || undefined },
           teacherProvidedSources: teacherProvidedSources.length > 0 ? teacherProvidedSources : undefined,
           sourceDescriptionMaxWords,
         } as any,
@@ -487,1382 +524,933 @@ export default function WritingGenerator() {
       {
         onSuccess: (data) => {
           const normalizedRubric = calcPointsFromWeights(data.rubric as any);
-          let prompts: WritingPrompt[] = Array.isArray((data as any).writingPrompts)
-            ? (data as any).writingPrompts
-            : [];
-          // If teacher picked a suggested prompt, ensure it leads the list
+          let prompts: WritingPrompt[] = Array.isArray((data as any).writingPrompts) ? (data as any).writingPrompts : [];
           if (selectedSuggestedPrompt.trim().length > 0) {
-            const selectedText = selectedSuggestedPrompt.trim();
-            const selectedTextLower = selectedText.toLowerCase();
-            const existingIdx = prompts.findIndex(
-              (p) => p.text.trim().toLowerCase() === selectedTextLower,
-            );
-            if (existingIdx >= 0) {
-              // Reuse AI metadata when the chosen suggestion already exists in generated prompts.
-              const [matched] = prompts.splice(existingIdx, 1);
-              prompts = [matched, ...prompts].slice(0, clampInt(promptCount, 1, 5));
-            } else {
-              const template = prompts[0];
-              const pinnedId = `pinned-${Date.now()}`;
-              const pinned: WritingPrompt = {
-                id: pinnedId,
-                text: selectedText,
-                type: template?.type || rubricType || "Essay",
-                skill: template?.skill || "Focused analysis",
-                difficulty: template?.difficulty || (difficulty ? difficulty[0].toUpperCase() + difficulty.slice(1) : "Medium"),
-              };
-              prompts = [pinned, ...prompts].slice(0, clampInt(promptCount, 1, 5));
+            const sel = selectedSuggestedPrompt.trim();
+            const idx = prompts.findIndex((p) => p.text.trim().toLowerCase() === sel.toLowerCase());
+            if (idx >= 0) { const [m] = prompts.splice(idx, 1); prompts = [m, ...prompts].slice(0, clampInt(promptCount, 1, 5)); }
+            else {
+              const tmpl = prompts[0];
+              prompts = [{
+                id: `pinned-${Date.now()}`, text: sel,
+                type: tmpl?.type || rubricType || "Essay",
+                skill: tmpl?.skill || "Focused analysis",
+                difficulty: tmpl?.difficulty || (difficulty ? difficulty[0].toUpperCase() + difficulty.slice(1) : "Medium"),
+              }, ...prompts].slice(0, clampInt(promptCount, 1, 5));
             }
           }
-          const next: WritingGenerateResult = {
-            ...(data as any),
-            writingPrompts: prompts,
-            rubric: normalizedRubric as any,
-          };
+          const next: WritingGenerateResult = { ...(data as any), writingPrompts: prompts, rubric: normalizedRubric as any };
           setGenerated(next);
-          setSelectedPromptId(next.writingPrompts?.[0]?.id || "");
+          const firstId = next.writingPrompts?.[0]?.id || "";
+          setSelectedPromptId(firstId);
           setFinalizedTopicData(null);
+          setHighlights([]);
           setPhase("results");
         },
         onError: (err) => {
-          console.error("Writing generate failed", err);
-          toast({
-            variant: "destructive",
-            title: "AI Generation Failed",
-            description: "There was a problem generating the writing activity from your topic.",
-          });
+          console.error(err);
+          toast({ variant: "destructive", title: "Generation Failed", description: "There was a problem generating the writing activity." });
         },
       },
     );
   };
 
-  const handleFinalizePrompt = async () => {
-    if (!selectedPrompt?.text.trim() || !grade || !difficulty || !rubricType) return;
+  const handleDiscard = () => { setGenerated(null); setSelectedPromptId(""); setFinalizedTopicData(null); setHighlights([]); setPhase("input"); };
 
-    try {
-      const data = await finalizeMutation.mutateAsync({
-        data: {
-          topic: selectedPrompt.text,
-          promptText: selectedPrompt.text,
-          grade,
-          subject: subject || undefined,
-          assessmentType: assessmentType || undefined,
-          difficulty: difficulty as Exclude<Difficulty, "">,
-          rubricType,
-          genre,
-          teacherProvidedSources: teacherProvidedSources.length > 0 ? teacherProvidedSources : undefined,
-          sourceDescriptionMaxWords,
-        } as any,
-      });
-
-      const finalized = {
-        promptText: selectedPrompt.text,
-        backgroundInformation: (data as any).backgroundInformation || "",
-        sources: Array.isArray((data as any).sources) ? (data as any).sources : [],
-      };
-
-      setFinalizedTopicData({
-        ...finalized,
-      });
-      setGenerated((prev) =>
-        prev
-          ? {
-              ...prev,
-              backgroundInformation: finalized.backgroundInformation,
-              sources: finalized.sources,
-            }
-          : prev,
-      );
-
-      toast({
-        title: "Prompt finalized",
-        description: `Generated student-facing background information and sources for the selected ${rubricType} prompt.`,
-      });
-    } catch (error) {
-      console.error("Finalize prompt failed", error);
-      toast({
-        variant: "destructive",
-        title: "Finalize Failed",
-        description: "There was a problem generating background information and sources for the selected prompt.",
-      });
-    }
-  };
-
-  const handleDiscard = () => {
-    setGenerated(null);
-    setSelectedPromptId("");
-    setFinalizedTopicData(null);
-    setPhase("input");
-  };
-
-  const selectedPrompt = useMemo(() => {
-    if (!generated) return null;
-    return generated.writingPrompts.find((p) => p.id === selectedPromptId) || null;
-  }, [generated, selectedPromptId]);
+  const selectedPrompt = useMemo(
+    () => (generated ? generated.writingPrompts.find((p) => p.id === selectedPromptId) || null : null),
+    [generated, selectedPromptId],
+  );
 
   const handleSave = async () => {
-    if (!generated || !user) return;
-    if (!selectedPrompt) {
-      toast({
-        variant: "destructive",
-        title: "Select a prompt",
-        description: "Please select exactly one writing prompt before saving.",
-      });
+    if (!generated || !user || !selectedPrompt) {
+      toast({ variant: "destructive", title: "Select a prompt", description: "Please select a writing prompt before saving." });
       return;
     }
-
     setIsSaving(true);
     try {
-      const sourceSetToPersist =
-        finalizedTopicData &&
-        selectedPrompt &&
-        finalizedTopicData.promptText.trim() === selectedPrompt.text.trim()
-          ? finalizedTopicData.sources
-          : generated.sources;
-      const backgroundToPersist =
-        finalizedTopicData &&
-        selectedPrompt &&
-        finalizedTopicData.promptText.trim() === selectedPrompt.text.trim()
-          ? finalizedTopicData.backgroundInformation
-          : generated.backgroundInformation;
-
-      const persistedPayload = {
-        kind: "writing_activity_v1",
-        writingPromptId: selectedPrompt.id,
-        backgroundInformation: backgroundToPersist || "",
-        sources: Array.isArray(sourceSetToPersist) ? sourceSetToPersist : [],
-        rubric: generated.rubric,
-        rubricParams,
-        topic,
-        maxAttempts,
-        dueDate: dueDate || null,
-        teacherProvidedSources,
-        sourceDescriptionMaxWords,
-      };
+      const sourceSetToPersist = finalizedTopicData?.promptText.trim() === selectedPrompt.text.trim() ? finalizedTopicData!.sources : generated.sources;
+      const bgToPersist = finalizedTopicData?.promptText.trim() === selectedPrompt.text.trim() ? finalizedTopicData!.backgroundInformation : generated.backgroundInformation;
 
       const newAssessment = await createAssessmentMutation.mutateAsync({
-        data: {
-          title: generated.assessmentTitle,
-          type: assessmentType as "CAASPP" | "ELPAC",
-          subject,
-          grade,
-          duration: 60,
-          difficulty,
-          classId: selectedClassId || undefined,
-          description: generated.summary,
-        } as any,
+        data: { title: generated.assessmentTitle, type: assessmentType as any, subject, grade, duration: 60, difficulty, classId: selectedClassId || undefined, description: generated.summary } as any,
       });
-
       await addQuestionMutation.mutateAsync({
         assessmentId: newAssessment.id,
         data: {
-          text: selectedPrompt.text,
-          type: "essay",
-          options: [],
-          correctAnswer: "",
-          explanation: JSON.stringify(persistedPayload),
-          audioScript: null,
-          skill: selectedPrompt.skill || null,
+          text: selectedPrompt.text, type: "essay", options: [], correctAnswer: "",
+          explanation: JSON.stringify({ kind: "writing_activity_v1", writingPromptId: selectedPrompt.id, backgroundInformation: bgToPersist || "", sources: sourceSetToPersist || [], rubric: generated.rubric, rubricParams, topic, maxAttempts, dueDate: dueDate || null, teacherProvidedSources, sourceDescriptionMaxWords, highlights }),
+          audioScript: null, skill: selectedPrompt.skill || null,
           points: generated.rubric.totalPoints || 20,
-          difficulty: difficulty === "mixed" ? "medium" : (difficulty as any),
+          difficulty: difficulty === "mixed" ? "medium" : difficulty as any,
           orderIndex: 0,
         } as any,
       });
-
-      toast({
-        title: "Assessment Saved!",
-        description: "Successfully saved your writing activity to your assessments.",
-      });
-
+      toast({ title: "Assessment Saved!", description: "Your writing activity has been saved." });
       setLocation("/teacher/assessments");
-    } catch (error) {
-      console.error("Failed to save writing activity:", error);
-      toast({
-        variant: "destructive",
-        title: "Save Failed",
-        description: "There was a problem saving your writing activity to the database.",
-      });
+    } catch {
+      toast({ variant: "destructive", title: "Save Failed", description: "There was a problem saving. Please try again." });
       setIsSaving(false);
     }
   };
 
   const weightSum = generated ? calcWeightSum(generated.rubric.criteria) : 0;
   const weightsOk = Math.round(weightSum) === 100;
-  const canEditRubric = Boolean(generated);
 
+  const triggerTopicSuggestions = (overrides: { rubricType?: RubricType; genre?: WritingGenre } = {}) => {
+    if (topic.trim().length > 0 || !subject || !grade) return;
+    const rt = overrides.rubricType ?? rubricType;
+    const g = overrides.genre ?? genre;
+    suggestTopicsMutateRef.current(
+      { data: { grade, subject, assessmentType: (assessmentType || "CAASPP") as any, difficulty: (difficulty || "easy") as any, rubricType: (rt || "essay") as any, genre: (g || "explanatory") as any } },
+      { onSuccess: (d) => setSuggestedTopics(Array.isArray((d as any)?.suggestions) ? (d as any).suggestions : []), onError: () => setSuggestedTopics([]) },
+    );
+  };
+
+  const isSuggestingTopics = suggestTopicsMutation.isPending;
+  const isSuggestingPrompts = suggestPromptsMutation.isPending;
+  const isGenerating = generateMutation.isPending || isPreparing;
+  const isFinalizing = finalizeMutation.isPending;
+
+  useEffect(() => {
+    autoResizeTextarea(backgroundInfoRef.current);
+    Object.values(sourceDescriptionRefs.current).forEach((el) => autoResizeTextarea(el));
+  }, [autoResizeTextarea, generated?.backgroundInformation, generated?.sources]);
+
+  // ── render ──────────────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
-      <div className="max-w-5xl mx-auto space-y-8">
-        <div>
-          <h1 className="text-3xl font-display font-bold mb-2 flex items-center gap-3">
-            Writing Prompt Generator <Sparkles className="w-6 h-6 text-accent" />
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            Generate rich, standards-aligned writing activities from a topic you type in — prompts, background info,
-            sources, and a rubric.
-          </p>
+      <div className="max-w-4xl mx-auto space-y-6">
+
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-display font-bold flex items-center gap-2">
+              Writing Activity Generator <Sparkles className="w-5 h-5 text-accent" />
+            </h1>
+            <p className="text-muted-foreground text-sm mt-1">
+              Pick your settings, type a topic, and let AI do the rest.
+            </p>
+          </div>
+          <div className="flex items-start gap-3">
+            {phase === "input" && (
+              <div className="w-[340px] max-w-[42vw]">
+                <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">
+                  Assessment Title (optional)
+                </label>
+                <Input
+                  className="h-11 rounded-xl"
+                  placeholder="e.g. Civil War Writing Task"
+                  value={manualAssessmentTitle}
+                  onChange={(e) => setManualAssessmentTitle(e.target.value)}
+                />
+              </div>
+            )}
+            {phase === "results" && (
+              <Button variant="outline" size="sm" onClick={handleDiscard} className="gap-2">
+                <ArrowLeft className="w-4 h-4" /> New Activity
+              </Button>
+            )}
+          </div>
         </div>
 
-        {phase === "input" ? (
-          <div className="grid md:grid-cols-2 gap-8">
-            <Card className="border-2 border-dashed border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-primary/70" />
-                  Topic / Text
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <label className="block text-sm font-medium">
-                  What topic or text are you teaching?
-                </label>
-                <textarea
-                  className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[220px] resize-y"
-                  placeholder='e.g. "The causes and effects of World War I", "To Kill a Mockingbird Chapter 5–8", "The water cycle and climate change"'
-                  value={topic}
-                  onChange={(e) => {
-                    setTopic(e.target.value);
-                  }}
-                />
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{topicCharCount} characters</span>
-                  <span>Be specific — the more detail you add, the better the AI can tailor the prompts.</span>
-                </div>
-                <div className="rounded-xl border border-primary/10 bg-white/70 p-3">
-                  <div className="flex items-center justify-between gap-3 mb-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-primary/80">
-                      {topic.trim().length > 0 ? "Suggested Writing Prompts" : "Suggested Topics"}
-                    </div>
-                    {suggestTopicsMutation.isPending || suggestPromptsMutation.isPending ? (
-                      <div className="flex items-center text-xs text-muted-foreground">
-                        <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> AI is suggesting...
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {topic.trim().length > 0 ? (
-                      suggestedPrompts.length > 0 ? (
-                        suggestedPrompts.map((suggestion, index) => {
-                          const isChosen = selectedSuggestedPrompt === suggestion;
-                          return (
-                            <button
-                              key={`${suggestion}-${index}`}
-                              type="button"
-                              className={`rounded-xl border-2 px-3 py-2 text-xs font-medium text-left w-full transition-colors ${
-                                isChosen
-                                  ? "border-primary bg-primary/10 text-primary"
-                                  : "border-primary/20 bg-primary/5 text-primary hover:bg-primary/10"
-                              }`}
-                              onClick={() =>
-                                setSelectedSuggestedPrompt((prev) =>
-                                  prev === suggestion ? "" : suggestion,
-                                )
-                              }
-                            >
-                              <div className="flex items-start gap-2">
-                                <span
-                                  className={`mt-0.5 shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                                    isChosen ? "border-primary bg-primary" : "border-primary/30"
-                                  }`}
-                                >
-                                  {isChosen ? <Check className="w-2.5 h-2.5 text-white" /> : null}
-                                </span>
-                                {suggestion}
-                              </div>
-                            </button>
-                          );
-                        })
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          {canSuggestPrompts
-                            ? "No prompt suggestions yet. Keep typing your topic or wait a moment for Gemini."
-                            : "Type at least 10 characters to get writing-prompt suggestions."}
-                        </span>
-                      )
-                    ) : (
-                      suggestedTopics.map((suggestion, index) => (
-                        <button
-                          key={`${suggestion}-${index}`}
-                          type="button"
-                          className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors text-left"
-                          onClick={() => setTopic(suggestion)}
-                        >
-                          {suggestion}
-                        </button>
-                      ))
-                    )}
-                    {topic.trim().length === 0 && suggestedTopics.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">
-                        {canSuggestTopics
-                          ? "No topic suggestions yet. Adjust the settings or wait a moment for Gemini."
-                          : "Select grade, writing type, difficulty, and genre to load Gemini topic ideas."}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+        {/* ── INPUT PHASE ── */}
+        {phase === "input" && (
+          <AnimatePresence>
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Writing Settings</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Assessment Type</label>
-                    <select
-                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                      value={assessmentType}
-                      onChange={(e) => setAssessmentType(e.target.value as any)}
-                    >
-                      <option value="">Select assessment type</option>
-                      <option value="CAASPP">CAASPP</option>
-                      <option value="ELPAC">ELPAC</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Subject Area</label>
-                    <select
-                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                      value={subject}
-                      onChange={(e) => setSubject(e.target.value)}
-                    >
-                      <option value="" disabled hidden>
-                        select subject area
-                      </option>
+              {/* ── Settings bar ── */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-muted-foreground" /> Writing Settings
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <SettingSelect label="Subject" value={subject} onChange={(v) => { setSubject(v); if (v !== "History/Social Studies") setSelectedLibrary(""); }}>
+                      <option value="" disabled hidden>Select subject</option>
                       <option value="English Language Arts">English Language Arts</option>
                       <option value="Mathematics">Mathematics</option>
                       <option value="Science">Science</option>
                       <option value="Listening/Speaking">Listening/Speaking</option>
                       <option value="History/Social Studies">History/Social Studies</option>
-                    </select>
-                  </div>
-                </div>
+                    </SettingSelect>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Grade Level</label>
-                    <select
-                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                      value={grade}
-                      onChange={(e) => setGrade(e.target.value)}
-                    >
-                      <option value="">Select grade level</option>
-                      {Array.from({ length: 10 }).map((_, i) => {
-                        const g = i + 3;
-                        return (
-                          <option key={g} value={String(g)}>
-                            Grade {g}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Assessment Title (Optional)</label>
-                    <Input
-                      className="w-full h-11 rounded-xl"
-                      placeholder="e.g. Civil War Writing Task"
-                      value={manualAssessmentTitle}
-                      onChange={(e) => setManualAssessmentTitle(e.target.value)}
-                    />
-                  </div>
-                </div>
+                    <SettingSelect label="Grade" value={grade} onChange={setGrade}>
+                      <option value="">Select grade</option>
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <option key={i + 3} value={String(i + 3)}>Grade {i + 3}</option>
+                      ))}
+                    </SettingSelect>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Max Attempts</label>
-                    <Input
-                      className="w-full h-11 rounded-xl"
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={maxAttemptsInput}
-                      onChange={(e) => setMaxAttemptsInput(e.target.value)}
-                      onBlur={() => setMaxAttemptsInput(String(maxAttempts))}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Due Date (Optional)</label>
-                    <Input
-                      className="w-full h-11 rounded-xl pr-12 scheme-light [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-100"
-                      type="datetime-local"
-                      value={dueDate}
-                      onChange={(e) => setDueDate(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Writing Type</label>
-                    <select
-                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                      value={rubricType}
-                      onChange={(e) => setRubricType(e.target.value as any)}
-                    >
-                      <option value="">Select writing type</option>
+                    <SettingSelect label="Writing Type" value={rubricType} onChange={(v) => {
+                      setRubricType(v as RubricType);
+                      triggerTopicSuggestions({ rubricType: v as RubricType });
+                    }}>
+                      <option value="">Select type</option>
                       <option value="response">Response</option>
                       <option value="essay">Essay</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Genre</label>
-                    <select
-                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                      value={genre}
-                      onChange={(e) => setGenre(e.target.value as any)}
-                    >
+                    </SettingSelect>
+
+                    <SettingSelect label="Genre" value={genre} onChange={(v) => {
+                      setGenre(v as WritingGenre);
+                      triggerTopicSuggestions({ genre: v as WritingGenre });
+                    }}>
                       <option value="">Select genre</option>
                       <option value="argumentative">Argumentative</option>
                       <option value="explanatory">Explanatory</option>
                       <option value="narrative">Narrative</option>
-                    </select>
-                  </div>
-                </div>
+                    </SettingSelect>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Difficulty</label>
-                    <select
-                      className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                      value={difficulty}
-                      onChange={(e) => setDifficulty(e.target.value as any)}
-                    >
+                    <SettingSelect label="Difficulty" value={difficulty} onChange={(v) => setDifficulty(v as Difficulty)}>
                       <option value="">Select difficulty</option>
                       <option value="easy">Easy</option>
                       <option value="medium">Medium</option>
                       <option value="hard">Hard</option>
                       <option value="mixed">Mixed</option>
-                    </select>
+                    </SettingSelect>
+
+                    <SettingSelect label="Assessment Type" value={assessmentType} onChange={(v) => setAssessmentType(v as AssessmentType)}>
+                      <option value="">Select type</option>
+                      <option value="CAASPP">CAASPP</option>
+                      <option value="ELPAC">ELPAC</option>
+                    </SettingSelect>
                   </div>
-                </div>
 
-                <div>
-                  <label className="text-sm font-medium mb-2 flex justify-between">
-                    <span>Number of Writing Prompts</span>
-                    <span className="text-primary font-bold">{promptCount}</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="1"
-                    max="5"
-                    value={promptCount}
-                    onChange={(e) => setPromptCount(parseInt(e.target.value, 10))}
-                    className="w-full accent-primary"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">Assign to Class (Optional)</label>
-                  <select
-                    className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                    value={selectedClassId}
-                    onChange={(e) => setSelectedClassId(e.target.value)}
-                  >
-                    <option value="">Do not assign</option>
-                    {myClasses.map((cls) => (
-                      <option key={cls.id} value={cls.id}>
-                        {cls.name} (Grade {cls.grade})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="pt-2 border-t border-border">
-                  <button
-                    type="button"
-                    className="flex items-center text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                  >
-                    {showAdvanced ? (
-                      <ChevronUp className="w-4 h-4 mr-1" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 mr-1" />
-                    )}
-                    Advanced Options (Rubric & Writing Parameters)
-                  </button>
-
-                  {showAdvanced && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      className="space-y-4 mt-4"
-                    >
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Min Words</label>
-                          <Input
-                            className="w-full h-11 rounded-xl"
-                            type="number"
-                            value={rubricParams.minWords}
-                            onChange={(e) =>
-                              setRubricParams((p) => ({ ...p, minWords: parseInt(e.target.value || "0", 10) }))
-                            }
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Max Words</label>
-                          <Input
-                            className="w-full h-11 rounded-xl"
-                            type="number"
-                            value={rubricParams.maxWords}
-                            onChange={(e) =>
-                              setRubricParams((p) => ({ ...p, maxWords: parseInt(e.target.value || "0", 10) }))
-                            }
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Min Paragraphs</label>
-                          <Input
-                            className="w-full h-11 rounded-xl"
-                            type="number"
-                            value={rubricParams.minParagraphs}
-                            onChange={(e) =>
-                              setRubricParams((p) => ({
-                                ...p,
-                                minParagraphs: parseInt(e.target.value || "0", 10),
-                              }))
-                            }
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Max Paragraphs</label>
-                          <Input
-                            className="w-full h-11 rounded-xl"
-                            type="number"
-                            value={rubricParams.maxParagraphs}
-                            onChange={(e) =>
-                              setRubricParams((p) => ({
-                                ...p,
-                                maxParagraphs: parseInt(e.target.value || "0", 10),
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <button
-                          type="button"
-                          className={`h-11 rounded-xl border px-4 text-sm font-medium transition-colors ${
-                            rubricParams.requireThesis
-                              ? "bg-primary text-primary-foreground border-primary"
-                              : "bg-background border-input text-foreground"
-                          }`}
-                          onClick={() => setRubricParams((p) => ({ ...p, requireThesis: !p.requireThesis }))}
-                        >
-                          Require Thesis Statement
-                        </button>
-                        <button
-                          type="button"
-                          className={`h-11 rounded-xl border px-4 text-sm font-medium transition-colors ${
-                            rubricParams.requireIntroConclusion
-                              ? "bg-primary text-primary-foreground border-primary"
-                              : "bg-background border-input text-foreground"
-                          }`}
-                          onClick={() =>
-                            setRubricParams((p) => ({ ...p, requireIntroConclusion: !p.requireIntroConclusion }))
-                          }
-                        >
-                          Require Intro & Conclusion
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Min Citations</label>
-                          <Input
-                            className="w-full h-11 rounded-xl"
-                            type="number"
-                            value={rubricParams.minCitations}
-                            onChange={(e) =>
-                              setRubricParams((p) => ({ ...p, minCitations: parseInt(e.target.value || "0", 10) }))
-                            }
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Max Citations</label>
-                          <Input
-                            className="w-full h-11 rounded-xl"
-                            type="number"
-                            value={rubricParams.maxCitations}
-                            onChange={(e) =>
-                              setRubricParams((p) => ({ ...p, maxCitations: parseInt(e.target.value || "0", 10) }))
-                            }
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium mb-1">Additional Instructions</label>
-                        <textarea
-                          className="w-full rounded-xl border border-input bg-background px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[90px] resize-y"
-                          placeholder="Optional custom rubric guidance for the AI..."
-                          value={rubricParams.additionalInstructions || ""}
-                          onChange={(e) =>
-                            setRubricParams((p) => ({ ...p, additionalInstructions: e.target.value }))
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Specific Sources for Gemini (Optional)
-                        </label>
-                        <textarea
-                          className="w-full rounded-xl border border-input bg-background px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[110px] resize-y"
-                          placeholder={"Paste source URLs/titles, one per line.\nExample:\nhttps://www.loc.gov/...\nNational Geographic: Water Scarcity"}
-                          value={teacherProvidedSourcesInput}
-                          onChange={(e) => setTeacherProvidedSourcesInput(e.target.value)}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Gemini will prioritize these sources when generating background/context and source cards.
-                        </p>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Max Words per Source Description
-                        </label>
-                        <Input
-                          className="w-full h-11 rounded-xl"
-                          type="number"
-                          min={40}
-                          max={500}
-                          value={sourceDescriptionMaxWordsInput}
-                          onChange={(e) => setSourceDescriptionMaxWordsInput(e.target.value)}
-                          onBlur={() => setSourceDescriptionMaxWordsInput(String(sourceDescriptionMaxWords))}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Limits how long each generated source description can be (40–500 words).
-                        </p>
-                      </div>
-                    </motion.div>
-                  )}
-                </div>
-
-                <Button
-                  className="w-full h-12 text-lg mt-4 group"
-                  disabled={!canGenerate || isPreparing || generateMutation.isPending}
-                  onClick={handleGenerate}
-                >
-                  {isPreparing ? (
-                    <>
-                      <Loader2 className="w-5 h-5 mr-2 animate-spin" /> Preparing topic...
-                    </>
-                  ) : generateMutation.isPending ? (
-                    <>
-                      <Sparkles className="w-5 h-5 mr-2 animate-pulse text-yellow-300" /> AI Generating...
-                    </>
-                  ) : (
-                    <>
-                      Generate Writing Activity{" "}
-                      <Sparkles className="w-5 h-5 ml-2 group-hover:rotate-12 transition-transform" />
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        ) : (
-          <AnimatePresence>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-6"
-            >
-              {generated ? (
-                <>
-                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <CheckCircle2 className="w-6 h-6 text-emerald-500" />
-                      <span className="font-medium">
-                        Successfully generated {generated.writingPrompts.length} prompts using AI
-                      </span>
+                  {/* Number of prompts */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Number of Prompts</span>
+                      <span className="text-sm font-bold text-primary">{promptCount}</span>
+                    </div>
+                    <input type="range" min="1" max="5" value={promptCount} onChange={(e) => setPromptCount(parseInt(e.target.value, 10))} className="w-full accent-primary h-1.5" />
+                    <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5">
+                      {[1, 2, 3, 4, 5].map((n) => <span key={n}>{n}</span>)}
                     </div>
                   </div>
 
-                  <Card className="overflow-hidden border-2 border-primary/10">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Sparkles className="w-5 h-5 text-accent" /> Writing Prompts
+                  {/* Optional settings accordion */}
+                  <div className="border-t pt-3">
+                    <button type="button" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowOptional(!showOptional)}>
+                      {showOptional ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      Assignment Options (class, due date, title)
+                    </button>
+                    {showOptional && (
+                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="grid grid-cols-2 gap-3 mt-3">
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">Assign to Class</span>
+                          <select className={SELECT_CLS} value={selectedClassId} onChange={(e) => setSelectedClassId(e.target.value)}>
+                            <option value="">Do not assign</option>
+                            {myClasses.map((cls) => <option key={cls.id} value={cls.id}>{cls.name} (Grade {cls.grade})</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">Max Attempts</span>
+                          <Input className="h-10 rounded-xl" type="number" min={1} max={10} value={maxAttemptsInput} onChange={(e) => setMaxAttemptsInput(e.target.value)} onBlur={() => setMaxAttemptsInput(String(maxAttempts))} />
+                        </div>
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">Due Date (optional)</span>
+                          <Input className="h-10 rounded-xl" type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+
+                  {/* Advanced accordion */}
+                  <div className="border-t pt-3">
+                    <button type="button" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowAdvanced(!showAdvanced)}>
+                      {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      Advanced (rubric params, custom sources)
+                    </button>
+                    {showAdvanced && (
+                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="space-y-3 mt-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          {([["Min Words", "minWords"], ["Max Words", "maxWords"], ["Min Paragraphs", "minParagraphs"], ["Max Paragraphs", "maxParagraphs"], ["Min Citations", "minCitations"], ["Max Citations", "maxCitations"]] as const).map(([label, key]) => (
+                            <div key={key}>
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">{label}</span>
+                              <Input className="h-10 rounded-xl" type="number" value={rubricParams[key]} onChange={(e) => setRubricParams((p) => ({ ...p, [key]: parseInt(e.target.value || "0", 10) }))} />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          {([["requireThesis", "Require Thesis Statement"], ["requireIntroConclusion", "Require Intro & Conclusion"]] as const).map(([key, label]) => (
+                            <button key={key} type="button"
+                              className={`h-10 rounded-xl border px-3 text-sm font-medium transition-colors ${rubricParams[key] ? "bg-primary text-primary-foreground border-primary" : "bg-background border-input"}`}
+                              onClick={() => setRubricParams((p) => ({ ...p, [key]: !p[key] }))}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">Additional Instructions</span>
+                          <textarea className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[80px] resize-y" placeholder="Optional custom rubric guidance..." value={rubricParams.additionalInstructions || ""} onChange={(e) => setRubricParams((p) => ({ ...p, additionalInstructions: e.target.value }))} />
+                        </div>
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">Custom Sources for AI (optional)</span>
+                          <textarea className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[80px] resize-y" placeholder={"URLs or titles, one per line"} value={teacherProvidedSourcesInput} onChange={(e) => setTeacherProvidedSourcesInput(e.target.value)} />
+                        </div>
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">Max Words per Source Description</span>
+                          <Input className="h-10 rounded-xl" type="number" min={40} max={500} value={sourceDescriptionMaxWordsInput} onChange={(e) => setSourceDescriptionMaxWordsInput(e.target.value)} onBlur={() => setSourceDescriptionMaxWordsInput(String(sourceDescriptionMaxWords))} />
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* ── Platform Libraries (History/Social Studies only) ── */}
+              {subject === "History/Social Studies" && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 8 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  <Card className="border-2 border-amber-200 bg-amber-50/40">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-amber-600" />
+                        Platform Libraries
+                        <span className="text-xs font-normal text-muted-foreground ml-1">— pick a library to focus topic suggestions</span>
+                        {selectedLibrary && (
+                          <button
+                            type="button"
+                            className="ml-auto text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                            onClick={() => { setSelectedLibrary(""); setTopic(""); setSuggestedTopics([]); setSuggestedPrompts([]); setSelectedSuggestedPrompt(""); }}
+                          >
+                            <X className="w-3 h-3" /> Clear
+                          </button>
+                        )}
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                      <p className="text-sm text-muted-foreground">
-                        Select exactly one prompt to save. You can edit the text, then finalize the selected prompt to generate student-facing background information and sources.
-                      </p>
-                      <div className="space-y-3">
-                        {generated.writingPrompts.map((p, i) => {
-                          const isSelected = p.id === selectedPromptId;
+                    <CardContent>
+                      <div className="flex flex-wrap gap-2">
+                        {HISTORY_PLATFORM_LIBRARIES.map((lib) => {
+                          const isChosen = selectedLibrary === lib;
                           return (
-                            <div
-                              key={p.id}
-                              className={`rounded-xl border-2 p-4 transition-colors ${
-                                isSelected ? "border-primary bg-primary/5" : "border-border bg-white"
+                            <button
+                              key={lib}
+                              type="button"
+                              onClick={() => {
+                                const next = isChosen ? "" : lib;
+                                setSelectedLibrary(next);
+                                setSuggestedTopics([]);
+                                setSuggestedPrompts([]);
+                                setSelectedSuggestedPrompt("");
+
+                                if (!next) {
+                                  setTopic("");
+                                  return;
+                                }
+
+                                // Put the library name directly in the topic box
+                                setTopic(next);
+
+                                const effectiveSubject = `${subject} — ${next}`;
+
+                                // Also fetch topic suggestions for this platform library context.
+                                suggestTopicsMutateRef.current(
+                                  {
+                                    data: {
+                                      grade: grade || "8",
+                                      subject: effectiveSubject,
+                                      assessmentType: (assessmentType || "CAASPP") as any,
+                                      difficulty: (difficulty || "easy") as any,
+                                      rubricType: (rubricType || "essay") as any,
+                                      genre: (genre || "explanatory") as any,
+                                    },
+                                  },
+                                  {
+                                    onSuccess: (d) => setSuggestedTopics(Array.isArray((d as any)?.suggestions) ? (d as any).suggestions : []),
+                                    onError: () => setSuggestedTopics([]),
+                                  },
+                                );
+
+                                // Suggest writing prompts based on library as topic.
+                                suggestPromptsMutateRef.current(
+                                  {
+                                    data: {
+                                      topic: next,
+                                      grade: grade || "8",
+                                      subject: effectiveSubject,
+                                      assessmentType: (assessmentType || "CAASPP") as any,
+                                      difficulty: (difficulty || "easy") as any,
+                                      promptCount: 3,
+                                      rubricType: (rubricType || "essay") as any,
+                                      genre: (genre || "explanatory") as any,
+                                      rubricParams: {
+                                        ...rubricParams,
+                                        minWords: clampInt(rubricParams.minWords, 0, 2000),
+                                        maxWords: clampInt(rubricParams.maxWords, 0, 5000),
+                                        minParagraphs: clampInt(rubricParams.minParagraphs, 0, 20),
+                                        maxParagraphs: clampInt(rubricParams.maxParagraphs, 0, 50),
+                                        minCitations: clampInt(rubricParams.minCitations, 0, 20),
+                                        maxCitations: clampInt(rubricParams.maxCitations, 0, 50),
+                                      },
+                                    } as any,
+                                  },
+                                  {
+                                    onSuccess: (d) => {
+                                      const prompts = Array.isArray((d as any)?.writingPrompts)
+                                        ? (d as any).writingPrompts.map((p: any) => String(p?.text ?? "").trim()).filter((p: string) => p.length > 0).slice(0, 5)
+                                        : [];
+                                      setSuggestedPrompts(prompts);
+                                    },
+                                    onError: () => {
+                                      setSuggestedPrompts([]);
+                                      toast({
+                                        variant: "destructive",
+                                        title: "Prompt suggestions unavailable",
+                                        description: "Gemini couldn't return prompts for this library right now. Please try another library or topic.",
+                                      });
+                                    },
+                                  },
+                                );
+                              }}
+                              className={`rounded-full px-3 py-1.5 text-sm font-medium border transition-all ${
+                                isChosen
+                                  ? "bg-amber-600 text-white border-amber-600 shadow-sm"
+                                  : "bg-white text-amber-800 border-amber-200 hover:bg-amber-100 hover:border-amber-400"
                               }`}
                             >
-                              <button
-                                type="button"
-                                className="w-full text-left"
-                                onClick={() => {
-                                  setSelectedPromptId(p.id);
-                                  setFinalizedTopicData((prev) =>
-                                    prev && prev.promptText.trim() !== p.text.trim() ? null : prev,
-                                  );
-                                }}
-                              >
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="flex items-center gap-2">
-                                    <span
-                                      className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold ${
-                                        isSelected ? "border-primary bg-primary text-white" : "border-gray-200 bg-white"
-                                      }`}
-                                    >
-                                      {i + 1}
-                                    </span>
-                                    <Badge variant="outline" className="bg-white/50">
-                                      {p.type}
-                                    </Badge>
-                                    <Badge variant="outline" className="bg-white/50">
-                                      {p.difficulty}
-                                    </Badge>
-                                    <Badge variant="outline" className="bg-white/50">
-                                      {p.skill || "General Skill"}
-                                    </Badge>
-                                  </div>
-                                  <div
-                                    className={`text-xs font-semibold ${
-                                      isSelected ? "text-primary" : "text-muted-foreground"
-                                    }`}
-                                  >
-                                    {isSelected ? "Selected" : "Select"}
-                                  </div>
-                                </div>
-                              </button>
-                              <textarea
-                                className="w-full mt-3 rounded-xl border border-border bg-white p-3 text-sm focus:ring-2 focus:ring-primary outline-none resize-y min-h-[120px]"
-                                value={p.text}
-                                onChange={(e) => {
-                                  const text = e.target.value;
-                                  if (isSelected) {
-                                    setFinalizedTopicData((prev) =>
-                                      prev && prev.promptText.trim() !== text.trim() ? null : prev,
-                                    );
-                                  }
-                                  setGenerated((prev) => {
-                                    if (!prev) return prev;
-                                    return {
-                                      ...prev,
-                                      writingPrompts: prev.writingPrompts.map((x) =>
-                                        x.id === p.id ? { ...x, text } : x,
-                                      ),
-                                    };
-                                  });
-                                }}
-                              />
-                              {isSelected ? (
-                                <div className="mt-3 flex justify-end">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="rounded-full"
-                                    disabled={!p.text.trim() || !grade || !difficulty || !rubricType || finalizeMutation.isPending}
-                                    onClick={handleFinalizePrompt}
-                                  >
-                                    {finalizeMutation.isPending ? (
-                                      <>
-                                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Finalizing...
-                                      </>
-                                    ) : (
-                                      <>Finalize Selected Prompt</>
-                                    )}
-                                  </Button>
-                                </div>
-                              ) : null}
-                            </div>
+                              {isChosen && <Check className="w-3 h-3 inline mr-1.5 -mt-0.5" />}
+                              {lib}
+                            </button>
                           );
                         })}
                       </div>
-                    </CardContent>
-                  </Card>
-
-                  {finalizedTopicData ? (
-                    <Card className="overflow-hidden border-2 border-primary/10">
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <BookOpen className="w-5 h-5 text-muted-foreground" /> Background Information
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <p className="text-xs text-muted-foreground">
-                          This background text will be shared with students before the writing activity.
+                      {selectedLibrary && (
+                        <p className="mt-3 text-xs text-amber-700 bg-amber-100 rounded-lg px-3 py-1.5">
+                          Topics and prompts will be focused on <strong>{selectedLibrary}</strong>. Type a topic below or use the AI suggestions.
                         </p>
-                        <textarea
-                          className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[180px] resize-y"
-                          value={generated.backgroundInformation}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setGenerated((p) => (p ? { ...p, backgroundInformation: value } : p));
-                            setFinalizedTopicData((prev) =>
-                              prev ? { ...prev, backgroundInformation: value } : prev,
-                            );
-                          }}
-                        />
-                      </CardContent>
-                    </Card>
-                  ) : (
-                    <div className="rounded-xl border-2 border-dashed border-primary/20 bg-primary/5 p-5 flex items-center gap-3 text-muted-foreground text-sm">
-                      <BookOpen className="w-5 h-5 shrink-0 text-primary/40" />
-                      <span>
-                        Background information will appear here once you <strong>Finalize</strong> the selected writing prompt above.
-                      </span>
-                    </div>
-                  )}
-
-                  <Card className="overflow-hidden border-2 border-primary/10">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <span className="flex items-center gap-2">
-                          <FileText className="w-5 h-5 text-muted-foreground" /> Sources
-                        </span>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      {finalizedTopicData && selectedPrompt && finalizedTopicData.promptText.trim() === selectedPrompt.text.trim() ? (
-                        <>
-                          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-800">
-                            These sources were generated from the currently selected writing prompt.
-                          </div>
-                          {finalizedTopicData.sources.length === 0 ? (
-                            <div className="text-sm text-muted-foreground">No sources generated yet.</div>
-                          ) : null}
-                          <div className="space-y-3">
-                            {finalizedTopicData.sources.map((s, idx) => (
-                          <div key={idx} className="rounded-xl border border-border bg-white p-4 space-y-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline" className="bg-white/50">
-                                  {s.type}
-                                </Badge>
-                              </div>
-                              <button
-                                type="button"
-                                className="text-red-500 hover:text-red-700"
-                                onClick={() => {
-                                  setGenerated((p) =>
-                                    p ? { ...p, sources: p.sources.filter((_, i) => i !== idx) } : p,
-                                  );
-                                  setFinalizedTopicData((prev) => {
-                                    if (!prev || !selectedPrompt) return prev;
-                                    if (prev.promptText.trim() !== selectedPrompt.text.trim()) return prev;
-                                    return { ...prev, sources: prev.sources.filter((_, i) => i !== idx) };
-                                  });
-                                }}
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                  Title
-                                </label>
-                                <Input
-                                  className="w-full h-11 rounded-xl"
-                                  value={s.title}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    setGenerated((p) => {
-                                      if (!p) return p;
-                                      const next = [...p.sources];
-                                      next[idx] = { ...next[idx], title: v };
-                                      setFinalizedTopicData((prev) => {
-                                        if (!prev) return prev;
-                                        const nextFinalized = [...prev.sources];
-                                        nextFinalized[idx] = { ...nextFinalized[idx], title: v };
-                                        return { ...prev, sources: nextFinalized };
-                                      });
-                                      return { ...p, sources: next };
-                                    });
-                                  }}
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                  URL (optional)
-                                </label>
-                                <Input
-                                  className="w-full h-11 rounded-xl"
-                                  value={s.url || ""}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    setGenerated((p) => {
-                                      if (!p) return p;
-                                      const next = [...p.sources];
-                                      next[idx] = { ...next[idx], url: v };
-                                      setFinalizedTopicData((prev) => {
-                                        if (!prev) return prev;
-                                        const nextFinalized = [...prev.sources];
-                                        nextFinalized[idx] = { ...nextFinalized[idx], url: v };
-                                        return { ...prev, sources: nextFinalized };
-                                      });
-                                      return { ...p, sources: next };
-                                    });
-                                  }}
-                                />
-                              </div>
-                            </div>
-
-                            {s.type === "video" ? (
-                              <div>
-                                <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                  Video Preview
-                                </label>
-                                {(() => {
-                                  const embedUrl = toEmbeddableVideoUrl(s.url);
-                                  if (embedUrl) {
-                                    return (
-                                      <div className="rounded-xl border border-input bg-background p-2">
-                                        <div className="relative w-full overflow-hidden rounded-lg bg-black pb-[56.25%]">
-                                          <iframe
-                                            title={`Video source ${idx + 1}`}
-                                            src={embedUrl}
-                                            className="absolute inset-0 h-full w-full"
-                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                            allowFullScreen
-                                          />
-                                        </div>
-                                      </div>
-                                    );
-                                  }
-                                  if (isDirectVideoFileUrl(s.url)) {
-                                    return (
-                                      <div className="rounded-xl border border-input bg-background p-2">
-                                        <video
-                                          key={`${idx}-${s.url}`}
-                                          controls
-                                          preload="metadata"
-                                          className="w-full rounded-lg bg-black max-h-72"
-                                          src={s.url}
-                                        >
-                                          Your browser does not support video playback.
-                                        </video>
-                                      </div>
-                                    );
-                                  }
-                                  if (s.url && s.url.trim().length > 0) {
-                                    return (
-                                      <div className="text-xs text-muted-foreground rounded-xl border border-dashed border-input bg-background px-3 py-2">
-                                        This link cannot be played inline. Open it in a new tab.
-                                      </div>
-                                    );
-                                  }
-                                  return (
-                                    <div className="text-xs text-muted-foreground rounded-xl border border-dashed border-input bg-background px-3 py-2">
-                                      Add a video URL to preview this source.
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            ) : null}
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <div>
-                                <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                  Author
-                                </label>
-                                <Input
-                                  className="w-full h-11 rounded-xl"
-                                  value={s.author || ""}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    setGenerated((p) => {
-                                      if (!p) return p;
-                                      const next = [...p.sources];
-                                      next[idx] = { ...next[idx], author: v };
-                                      setFinalizedTopicData((prev) => {
-                                        if (!prev) return prev;
-                                        const nextFinalized = [...prev.sources];
-                                        nextFinalized[idx] = { ...nextFinalized[idx], author: v };
-                                        return { ...prev, sources: nextFinalized };
-                                      });
-                                      return { ...p, sources: next };
-                                    });
-                                  }}
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                  Year
-                                </label>
-                                <Input
-                                  className="w-full h-11 rounded-xl"
-                                  value={s.year || ""}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    setGenerated((p) => {
-                                      if (!p) return p;
-                                      const next = [...p.sources];
-                                      next[idx] = { ...next[idx], year: v };
-                                      setFinalizedTopicData((prev) => {
-                                        if (!prev) return prev;
-                                        const nextFinalized = [...prev.sources];
-                                        nextFinalized[idx] = { ...nextFinalized[idx], year: v };
-                                        return { ...prev, sources: nextFinalized };
-                                      });
-                                      return { ...p, sources: next };
-                                    });
-                                  }}
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                  Type
-                                </label>
-                                <select
-                                  className="w-full h-11 rounded-xl border border-input bg-background px-4 text-sm focus:ring-2 focus:ring-primary outline-none"
-                                  value={s.type}
-                                  onChange={(e) => {
-                                    const v = e.target.value as SourceType;
-                                    setGenerated((p) => {
-                                      if (!p) return p;
-                                      const next = [...p.sources];
-                                      next[idx] = { ...next[idx], type: v };
-                                      setFinalizedTopicData((prev) => {
-                                        if (!prev) return prev;
-                                        const nextFinalized = [...prev.sources];
-                                        nextFinalized[idx] = { ...nextFinalized[idx], type: v };
-                                        return { ...prev, sources: nextFinalized };
-                                      });
-                                      return { ...p, sources: next };
-                                    });
-                                  }}
-                                >
-                                  <option value="article">article</option>
-                                  <option value="book">book</option>
-                                  <option value="website">website</option>
-                                  <option value="primary_source">primary_source</option>
-                                  <option value="video">video</option>
-                                </select>
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="block text-xs font-bold text-muted-foreground uppercase mb-1">
-                                Description (background context; often long)
-                              </label>
-                              <textarea
-                                className="w-full rounded-xl border border-input bg-background px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[200px] max-h-[min(50vh,28rem)] resize-y overflow-y-auto"
-                                value={s.description}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setGenerated((p) => {
-                                    if (!p) return p;
-                                    const next = [...p.sources];
-                                    next[idx] = { ...next[idx], description: v };
-                                    setFinalizedTopicData((prev) => {
-                                      if (!prev) return prev;
-                                      const nextFinalized = [...prev.sources];
-                                      nextFinalized[idx] = { ...nextFinalized[idx], description: v };
-                                      return { ...prev, sources: nextFinalized };
-                                    });
-                                    return { ...p, sources: next };
-                                  });
-                                }}
-                              />
-                            </div>
-                          </div>
-                            ))}
-                          </div>
-                        </>
-                      ) : (
-                        <div className="rounded-xl border-2 border-dashed border-primary/20 bg-primary/5 p-5 flex items-center gap-3 text-muted-foreground text-sm">
-                          <FileText className="w-5 h-5 shrink-0 text-primary/40" />
-                          <span>
-                            Sources will appear here once you <strong>Finalize</strong> the selected writing prompt above.
-                          </span>
-                        </div>
                       )}
-                      <div className="flex justify-start pt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const newSource = {
-                              title: "",
-                              author: "",
-                              year: "",
-                              description: "",
-                              type: "website" as const,
-                              url: "",
-                            };
-                            setGenerated((p) =>
-                              p
-                                ? {
-                                    ...p,
-                                    sources: [
-                                      ...p.sources,
-                                      newSource,
-                                    ],
-                                  }
-                                : p,
-                            );
-                            setFinalizedTopicData((prev) => {
-                              if (!prev || !selectedPrompt) return prev;
-                              if (prev.promptText.trim() !== selectedPrompt.text.trim()) return prev;
-                              return { ...prev, sources: [...prev.sources, newSource] };
-                            });
-                          }}
-                        >
-                          <Plus className="w-4 h-4 mr-2" /> Add Source
-                        </Button>
-                      </div>
                     </CardContent>
                   </Card>
+                </motion.div>
+              )}
 
-                  <Card className="overflow-hidden border-2 border-primary/10">
-                    <CardHeader>
-                      <CardTitle className="flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-muted-foreground" /> Rubric
-                        </span>
-                        <div className="flex items-center gap-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={!canEditRubric}
-                            onClick={() =>
-                              setGenerated((p) => {
-                                if (!p) return p;
-                                const nextCriteria = [...p.rubric.criteria, newRubricCriterion()];
-                                const normalized = normalizeWeightsTo100(nextCriteria);
-                                return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: normalized }) };
-                              })
-                            }
-                          >
-                            <Plus className="w-4 h-4 mr-2" /> Add Criterion
-                          </Button>
-                          <div
-                            className={`text-xs font-bold ${
-                              weightsOk ? "text-emerald-700" : "text-red-600"
-                            }`}
-                          >
-                            Weights total: {Math.round(weightSum)}%
-                          </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setGenerated((p) => {
-                                if (!p) return p;
-                                const normalized = normalizeWeightsTo100(p.rubric.criteria);
-                                return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: normalized }) };
-                              })
-                            }
-                          >
-                            Update Weights
-                          </Button>
-                        </div>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <Dialog
-                        open={rubricSplitCriterionIdx !== null}
-                        onOpenChange={(open) => {
-                          if (!open) setRubricSplitCriterionIdx(null);
-                        }}
-                      >
-                        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto sm:rounded-xl">
-                          <DialogHeader>
-                            <DialogTitle>
-                              Rubric split
-                              {rubricSplitCriterionIdx !== null && generated?.rubric.criteria[rubricSplitCriterionIdx] ? (
-                                <span className="block text-sm font-normal text-muted-foreground mt-1">
-                                  {generated.rubric.criteria[rubricSplitCriterionIdx].name}
-                                </span>
-                              ) : null}
-                            </DialogTitle>
-                          </DialogHeader>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            {(
-                              [
-                                { key: "exemplary" as const, label: "Exemplary" },
-                                { key: "proficient" as const, label: "Proficient" },
-                                { key: "developing" as const, label: "Developing" },
-                                { key: "beginning" as const, label: "Beginning" },
-                              ] as const
-                            ).map(({ key, label }) => (
-                              <div key={key} className="space-y-1.5">
-                                <label className="text-xs font-bold uppercase text-muted-foreground">{label}</label>
-                                <textarea
-                                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[100px] resize-y"
-                                  value={rubricSplitDraft[key]}
-                                  onChange={(e) =>
-                                    setRubricSplitDraft((d) => ({ ...d, [key]: e.target.value }))
-                                  }
-                                />
-                              </div>
-                            ))}
-                          </div>
-                          <DialogFooter className="gap-2 sm:gap-0">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => setRubricSplitCriterionIdx(null)}
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              type="button"
-                              className="gap-2"
-                              onClick={() => {
-                                if (rubricSplitCriterionIdx === null) return;
-                                const idx = rubricSplitCriterionIdx;
-                                setGenerated((p) => {
-                                  if (!p) return p;
-                                  const nextCriteria = [...p.rubric.criteria];
-                                  nextCriteria[idx] = applyLevelDraftToCriterion(nextCriteria[idx], rubricSplitDraft);
-                                  return { ...p, rubric: { ...p.rubric, criteria: nextCriteria } };
-                                });
-                                setRubricSplitCriterionIdx(null);
-                              }}
-                            >
-                              <Check className="w-4 h-4" />
-                              Save
-                            </Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
-
-                      <div className="overflow-x-auto">
-                        <table className="min-w-[640px] w-full border-collapse">
-                          <thead>
-                            <tr className="text-xs uppercase text-muted-foreground">
-                              <th className="text-left p-2 border-b min-w-[200px]">Criterion</th>
-                              <th className="text-left p-2 border-b w-24">Points</th>
-                              <th className="text-left p-2 border-b w-28">Weight %</th>
-                              <th className="text-left p-2 border-b w-36">Rubric split</th>
-                              <th className="text-left p-2 border-b w-12"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {generated.rubric.criteria.map((c, idx) => (
-                              <tr key={c.id} className="align-top">
-                                <td className="p-2 border-b">
-                                  <Input
-                                    className="mb-2 h-9 rounded-xl font-semibold"
-                                    value={c.name}
-                                    placeholder="Criterion title"
-                                    disabled={!canEditRubric}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      setGenerated((p) => {
-                                        if (!p) return p;
-                                        const nextCriteria = [...p.rubric.criteria];
-                                        nextCriteria[idx] = { ...nextCriteria[idx], name: v };
-                                        return { ...p, rubric: { ...p.rubric, criteria: nextCriteria } };
-                                      });
-                                    }}
-                                  />
-                                  <textarea
-                                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs text-muted-foreground focus:ring-2 focus:ring-primary outline-none min-h-[56px] resize-y"
-                                    placeholder="Short description (optional)"
-                                    value={c.description}
-                                    disabled={!canEditRubric}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      setGenerated((p) => {
-                                        if (!p) return p;
-                                        const nextCriteria = [...p.rubric.criteria];
-                                        nextCriteria[idx] = { ...nextCriteria[idx], description: v };
-                                        return { ...p, rubric: { ...p.rubric, criteria: nextCriteria } };
-                                      });
-                                    }}
-                                  />
-                                </td>
-                                <td className="p-2 border-b font-semibold">{c.points}</td>
-                                <td className="p-2 border-b">
-                                  <Input
-                                    className="w-24 h-9 rounded-xl"
-                                    type="number"
-                                    disabled={!canEditRubric}
-                                    value={c.weight}
-                                    onChange={(e) => {
-                                      const v = Number(e.target.value);
-                                      setGenerated((p) => {
-                                        if (!p) return p;
-                                        const nextCriteria = [...p.rubric.criteria];
-                                        nextCriteria[idx] = { ...nextCriteria[idx], weight: Number.isFinite(v) ? v : 0 };
-                                        return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: nextCriteria }) };
-                                      });
-                                    }}
-                                  />
-                                </td>
-                                <td className="p-2 border-b">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="rounded-xl whitespace-nowrap"
-                                    disabled={!canEditRubric}
-                                    onClick={() => {
-                                      setRubricSplitCriterionIdx(idx);
-                                      setRubricSplitDraft(criterionLevelsToDraft(c));
-                                    }}
-                                  >
-                                    Rubric split
-                                  </Button>
-                                </td>
-                                <td className="p-2 border-b">
-                                  <button
-                                    type="button"
-                                    className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-border bg-white text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors disabled:opacity-50"
-                                    title="Remove criterion"
-                                    disabled={!canEditRubric}
-                                    onClick={() => {
-                                      setRubricSplitCriterionIdx(null);
-                                      setGenerated((p) => {
-                                        if (!p) return p;
-                                        const nextCriteria = p.rubric.criteria.filter((_, i) => i !== idx);
-                                        const normalized = normalizeWeightsTo100(nextCriteria);
-                                        return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: normalized }) };
-                                      });
-                                    }}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                            <tr>
-                              <td className="p-2 font-bold">Total</td>
-                              <td className="p-2 font-bold">{generated.rubric.totalPoints}</td>
-                              <td className="p-2 font-bold">{Math.round(weightSum)}%</td>
-                              <td className="p-2" colSpan={2} />
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <div className="flex items-center justify-end gap-3 pt-2">
-                    <Button variant="outline" onClick={handleDiscard} disabled={isSaving}>
-                      Discard
-                    </Button>
-                    <Button variant="default" onClick={handleSave} disabled={isSaving}>
-                      {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                      {isSaving ? "Saving..." : "Save Assessment"} <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
+              {/* ── Topic card ── */}
+              <Card className="border-2 border-primary/20 bg-primary/3">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-primary/70" /> Topic / Text
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <textarea
+                    className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[160px] resize-y"
+                    placeholder='e.g. "The causes of World War I", "To Kill a Mockingbird Ch. 5–8", "The water cycle and climate change"'
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                  />
+                  <div className="flex items-center justify-between text-xs text-muted-foreground -mt-1">
+                    <span>{topic.length} characters</span>
+                    <span>More detail → better AI output</span>
                   </div>
 
-                </>
-              ) : null}
+                  {/* Suggestions */}
+                  <div className="rounded-xl border border-primary/10 bg-white/60 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-primary/70">
+                        {topic.trim().length > 0 ? "Suggested Writing Prompts" : "Suggested Topics"}
+                      </span>
+                      {(isSuggestingTopics || isSuggestingPrompts) && (
+                        <span className="flex items-center text-xs text-muted-foreground gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" /> AI thinking...
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {topic.trim().length > 0 ? (
+                        suggestedPrompts.length > 0 ? suggestedPrompts.map((s, i) => {
+                          const chosen = selectedSuggestedPrompt === s;
+                          return (
+                            <button key={i} type="button"
+                              className={`rounded-xl border-2 px-3 py-2 text-xs font-medium text-left w-full transition-colors ${chosen ? "border-primary bg-primary/10 text-primary" : "border-primary/20 bg-primary/5 text-primary hover:bg-primary/10"}`}
+                              onClick={() => setSelectedSuggestedPrompt((prev) => prev === s ? "" : s)}>
+                              <div className="flex items-start gap-2">
+                                <span className={`mt-0.5 shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${chosen ? "border-primary bg-primary" : "border-primary/30"}`}>
+                                  {chosen && <Check className="w-2.5 h-2.5 text-white" />}
+                                </span>
+                                {s}
+                              </div>
+                            </button>
+                          );
+                        }) : (
+                          <span className="text-xs text-muted-foreground">
+                            {isSuggestingPrompts ? "Waiting for Gemini…" : "No prompt suggestions yet. Try another library/topic."}
+                          </span>
+                        )
+                      ) : (
+                        suggestedTopics.length > 0 ? suggestedTopics.map((s, i) => (
+                          <button key={i} type="button"
+                            className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                            onClick={() => setTopic(s)}>
+                            {s}
+                          </button>
+                        )) : (
+                          <span className="text-xs text-muted-foreground">
+                            {canSuggestTopics ? "Waiting for Gemini topic ideas…" : "Select Subject and Grade to load AI topic suggestions."}
+                          </span>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* ── Generate CTA ── */}
+              <div className="space-y-2">
+                {missingFields.length > 0 && (
+                  <p className="text-xs text-muted-foreground text-center">
+                    Still needed: <span className="font-medium text-foreground">{missingFields.join(", ")}</span>
+                  </p>
+                )}
+                <Button
+                  className="w-full h-13 text-base gap-2 group"
+                  disabled={!canGenerate || isGenerating}
+                  onClick={handleGenerate}
+                >
+                  {isPreparing ? (<><Loader2 className="w-5 h-5 animate-spin" /> Preparing…</>) :
+                    isGenerating ? (<><Sparkles className="w-5 h-5 animate-pulse text-yellow-300" /> AI Generating…</>) :
+                      (<><Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" /> Generate Writing Activity</>)}
+                </Button>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        )}
+
+        {/* ── RESULTS PHASE ── */}
+        {phase === "results" && generated && (
+          <AnimatePresence>
+            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+
+              {/* Success banner */}
+              <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-xl text-sm font-medium">
+                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                Generated {generated.writingPrompts.length} writing prompt{generated.writingPrompts.length > 1 ? "s" : ""}.
+                {isFinalizing && <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground font-normal"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating background info…</span>}
+              </div>
+
+              {/* Prompts */}
+              <Card className="border-2 border-primary/10">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-accent" /> Writing Prompts
+                    <span className="text-xs font-normal text-muted-foreground ml-1">— select one, then edit if needed</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {generated.writingPrompts.map((p, i) => {
+                    const isSelected = p.id === selectedPromptId;
+                    return (
+                      <div key={p.id} className={`rounded-xl border-2 transition-colors ${isSelected ? "border-primary bg-primary/5" : "border-border bg-white"}`}>
+                        {/* Prompt header – click to select */}
+                        <button type="button" className="w-full text-left px-4 pt-3 pb-2" onClick={() => {
+                          if (selectedPromptId !== p.id) {
+                            setHighlights([]);
+                          }
+                          setSelectedPromptId(p.id);
+                          setFinalizedTopicData((prev) => (prev && prev.promptText.trim() !== p.text.trim() ? null : prev));
+                        }}>
+                          <div className="flex items-center gap-2">
+                            <span className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold shrink-0 ${isSelected ? "border-primary bg-primary text-white" : "border-gray-200"}`}>{i + 1}</span>
+                            <Badge variant="outline" className="text-[10px]">{p.type}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{p.difficulty}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{p.skill || "General"}</Badge>
+                            <span className={`ml-auto text-xs font-semibold ${isSelected ? "text-primary" : "text-muted-foreground"}`}>{isSelected ? "Selected ✓" : "Select"}</span>
+                          </div>
+                        </button>
+                        {/* Editable textarea */}
+                        <div className="px-4 pb-4">
+                          <textarea
+                            ref={(el) => { promptTextareaRefs.current[p.id] = el; }}
+                            className="w-full rounded-xl border border-border bg-white p-3 text-sm focus:ring-2 focus:ring-primary outline-none resize-y min-h-[100px]"
+                            value={p.text}
+                            onChange={(e) => {
+                              const text = e.target.value;
+                              if (isSelected) setFinalizedTopicData((prev) => (prev && prev.promptText.trim() !== text.trim() ? null : prev));
+                              setGenerated((prev) => prev ? { ...prev, writingPrompts: prev.writingPrompts.map((x) => x.id === p.id ? { ...x, text } : x) } : prev);
+                            }}
+                          />
+                          {isSelected && (
+                            <div className="flex justify-end mt-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full gap-1.5 mr-2"
+                                onClick={() => {
+                                  const el = promptTextareaRefs.current[p.id];
+                                  addHighlightFromSelection("prompt", p.text, el?.selectionStart, el?.selectionEnd);
+                                }}
+                              >
+                                Highlight Selected Text
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full gap-1.5 mr-2"
+                                onClick={() => undoLastHighlight("prompt")}
+                              >
+                                Undo Highlight
+                              </Button>
+                              <Button variant="outline" size="sm" className="rounded-full gap-1.5" disabled={!p.text.trim() || isFinalizing} onClick={() => autoFinalize(p.text)}>
+                                {isFinalizing ? (
+                                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Finalizing…</>
+                                ) : finalizedTopicData && finalizedTopicData.promptText.trim() === p.text.trim() ? (
+                                  "↻ Regenerate Background & Sources"
+                                ) : (
+                                  "Finalize Writing Prompt"
+                                )}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+
+              {/* Background Info */}
+              {finalizedTopicData ? (
+                <Card className="border-2 border-primary/10">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-muted-foreground" /> Background Information
+                      <span className="text-xs font-normal text-muted-foreground ml-1">— shown to students before writing</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex justify-end mb-2 gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full gap-1.5"
+                        onClick={() =>
+                          addHighlightFromSelection(
+                            "background",
+                            generated.backgroundInformation || "",
+                            backgroundInfoRef.current?.selectionStart,
+                            backgroundInfoRef.current?.selectionEnd,
+                          )
+                        }
+                      >
+                        Highlight Selected Text
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full gap-1.5"
+                        onClick={() => undoLastHighlight("background")}
+                      >
+                        Undo Highlight
+                      </Button>
+                    </div>
+                    <textarea
+                      ref={(el) => {
+                        backgroundInfoRef.current = el;
+                        autoResizeTextarea(el);
+                      }}
+                      className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[160px] resize-none overflow-hidden"
+                      value={generated.backgroundInformation}
+                      onInput={(e) => autoResizeTextarea(e.currentTarget)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setGenerated((p) => (p ? { ...p, backgroundInformation: v } : p));
+                        setFinalizedTopicData((prev) => (prev ? { ...prev, backgroundInformation: v } : prev));
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              ) : (
+                !isFinalizing && (
+                  <div className="rounded-xl border-2 border-dashed border-primary/20 bg-primary/5 p-4 flex items-center gap-3 text-muted-foreground text-sm">
+                    <BookOpen className="w-5 h-5 shrink-0 text-primary/40" />
+                    Select a prompt above to generate background information and sources.
+                  </div>
+                )
+              )}
+
+              {/* Sources */}
+              <Card className="border-2 border-primary/10">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2"><FileText className="w-4 h-4 text-muted-foreground" /> Sources</span>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => {
+                      const nextSourceIndex = generated?.sources?.length ?? 0;
+                      const ns = { title: "", author: "", year: "", description: "", type: "website" as SourceType, url: "" };
+                      setGenerated((p) => p ? { ...p, sources: [...p.sources, ns] } : p);
+                      setFinalizedTopicData((prev) => {
+                        if (!prev || !selectedPrompt || prev.promptText.trim() !== selectedPrompt.text.trim()) return prev;
+                        return { ...prev, sources: [...prev.sources, ns] };
+                      });
+                      window.setTimeout(() => {
+                        sourceCardRefs.current[nextSourceIndex]?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start",
+                        });
+                      }, 80);
+                    }}>
+                      <Plus className="w-3.5 h-3.5" /> Add Source
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {finalizedTopicData && selectedPrompt && finalizedTopicData.promptText.trim() === selectedPrompt.text.trim() ? (
+                    finalizedTopicData.sources.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No sources generated. You can add them manually.</p>
+                    ) : (
+                      finalizedTopicData.sources.map((s, idx) => (
+                        <div
+                          key={idx}
+                          ref={(el) => { sourceCardRefs.current[idx] = el; }}
+                          className="rounded-xl border border-border bg-white p-4 space-y-3"
+                        >
+                          <div className="flex items-center justify-between">
+                            <Badge variant="outline">{s.type}</Badge>
+                            <button type="button" className="text-red-500 hover:text-red-700" onClick={() => {
+                              setGenerated((p) => p ? { ...p, sources: p.sources.filter((_, i) => i !== idx) } : p);
+                              setFinalizedTopicData((prev) => {
+                                if (!prev || !selectedPrompt || prev.promptText.trim() !== selectedPrompt.text.trim()) return prev;
+                                return { ...prev, sources: prev.sources.filter((_, i) => i !== idx) };
+                              });
+                            }}><X className="w-4 h-4" /></button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            {(["title", "url", "author", "year"] as const).map((field) => {
+                              const labels: Record<string, string> = { title: "Title", url: "URL (optional)", author: "Author", year: "Year" };
+                              return (
+                                <div key={field}>
+                                  <label className="block text-[10px] font-bold uppercase text-muted-foreground mb-1">{labels[field]}</label>
+                                  <Input className="h-9 rounded-xl" value={(s as any)[field] || ""} onChange={(e) => {
+                                    const v = e.target.value;
+                                    const update = (arr: WritingSource[]) => { const n = [...arr]; n[idx] = { ...n[idx], [field]: v }; return n; };
+                                    setGenerated((p) => p ? { ...p, sources: update(p.sources) } : p);
+                                    setFinalizedTopicData((prev) => prev ? { ...prev, sources: update(prev.sources) } : prev);
+                                  }} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase text-muted-foreground mb-1">Source Type</label>
+                            <select className={SELECT_CLS} value={s.type} onChange={(e) => {
+                              const v = e.target.value as SourceType;
+                              const update = (arr: WritingSource[]) => { const n = [...arr]; n[idx] = { ...n[idx], type: v }; return n; };
+                              setGenerated((p) => p ? { ...p, sources: update(p.sources) } : p);
+                              setFinalizedTopicData((prev) => prev ? { ...prev, sources: update(prev.sources) } : prev);
+                            }}>
+                              <option value="article">Article</option>
+                              <option value="book">Book</option>
+                              <option value="website">Website</option>
+                              <option value="primary_source">Primary Source</option>
+                              <option value="video">Video</option>
+                            </select>
+                          </div>
+                          {s.type === "video" && (() => {
+                            const embed = toEmbeddableVideoUrl(s.url);
+                            if (embed) return <div className="relative w-full pb-[56.25%] rounded-xl overflow-hidden bg-black"><iframe src={embed} className="absolute inset-0 h-full w-full" allowFullScreen /></div>;
+                            if (isDirectVideoFileUrl(s.url)) return <video controls preload="metadata" className="w-full rounded-xl bg-black max-h-64" src={s.url} />;
+                            return <p className="text-xs text-muted-foreground">Add a YouTube, Vimeo, or direct video URL to preview.</p>;
+                          })()}
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase text-muted-foreground mb-1">Description</label>
+                            <div className="flex justify-end mb-1 gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full gap-1.5"
+                                onClick={() =>
+                                  addHighlightFromSelection(
+                                    "source",
+                                    s.description || "",
+                                    sourceDescriptionRefs.current[idx]?.selectionStart,
+                                    sourceDescriptionRefs.current[idx]?.selectionEnd,
+                                    idx,
+                                  )
+                                }
+                              >
+                                Highlight Selected Text
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full gap-1.5"
+                                onClick={() => undoLastHighlight("source", idx)}
+                              >
+                                Undo Highlight
+                              </Button>
+                            </div>
+                            <textarea
+                              ref={(el) => {
+                                sourceDescriptionRefs.current[idx] = el;
+                                autoResizeTextarea(el);
+                              }}
+                              className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[120px] resize-none overflow-hidden"
+                              value={s.description}
+                              onInput={(e) => autoResizeTextarea(e.currentTarget)}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const update = (arr: WritingSource[]) => { const n = [...arr]; n[idx] = { ...n[idx], description: v }; return n; };
+                                setGenerated((p) => p ? { ...p, sources: update(p.sources) } : p);
+                                setFinalizedTopicData((prev) => prev ? { ...prev, sources: update(prev.sources) } : prev);
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    )
+                  ) : (
+                    !isFinalizing && (
+                      <div className="rounded-xl border-2 border-dashed border-primary/20 bg-primary/5 p-4 flex items-center gap-3 text-muted-foreground text-sm">
+                        <FileText className="w-5 h-5 shrink-0 text-primary/40" />
+                        Sources will appear once a prompt is finalized above.
+                      </div>
+                    )
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Rubric */}
+              <Card className="border-2 border-primary/10">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-muted-foreground" /> Rubric</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-bold ${weightsOk ? "text-emerald-700" : "text-red-600"}`}>Weights: {Math.round(weightSum)}%</span>
+                      <Button variant="outline" size="sm" onClick={() => setGenerated((p) => {
+                        if (!p) return p;
+                        const norm = normalizeWeightsTo100(p.rubric.criteria);
+                        return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: norm }) };
+                      })}>Auto-balance</Button>
+                      <Button variant="outline" size="sm" onClick={() => setGenerated((p) => {
+                        if (!p) return p;
+                        const next = [...p.rubric.criteria, newRubricCriterion()];
+                        return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: normalizeWeightsTo100(next) }) };
+                      })}><Plus className="w-4 h-4 mr-1" /> Criterion</Button>
+                    </div>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {/* Rubric split dialog */}
+                  <Dialog open={rubricSplitCriterionIdx !== null} onOpenChange={(open) => { if (!open) setRubricSplitCriterionIdx(null); }}>
+                    <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto sm:rounded-xl">
+                      <DialogHeader>
+                        <DialogTitle>
+                          Level Descriptions
+                          {rubricSplitCriterionIdx !== null && generated?.rubric.criteria[rubricSplitCriterionIdx] && (
+                            <span className="block text-sm font-normal text-muted-foreground mt-1">{generated.rubric.criteria[rubricSplitCriterionIdx].name}</span>
+                          )}
+                        </DialogTitle>
+                      </DialogHeader>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {(["exemplary", "proficient", "developing", "beginning"] as const).map((key) => (
+                          <div key={key} className="space-y-1.5">
+                            <label className="text-xs font-bold uppercase text-muted-foreground">{key}</label>
+                            <textarea className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none min-h-[100px] resize-y" value={rubricSplitDraft[key]} onChange={(e) => setRubricSplitDraft((d) => ({ ...d, [key]: e.target.value }))} />
+                          </div>
+                        ))}
+                      </div>
+                      <DialogFooter className="gap-2 sm:gap-0">
+                        <Button variant="outline" onClick={() => setRubricSplitCriterionIdx(null)}>Cancel</Button>
+                        <Button onClick={() => {
+                          if (rubricSplitCriterionIdx === null) return;
+                          const i = rubricSplitCriterionIdx;
+                          setGenerated((p) => {
+                            if (!p) return p;
+                            const next = [...p.rubric.criteria];
+                            next[i] = applyLevelDraftToCriterion(next[i], rubricSplitDraft);
+                            return { ...p, rubric: { ...p.rubric, criteria: next } };
+                          });
+                          setRubricSplitCriterionIdx(null);
+                        }}><Check className="w-4 h-4 mr-1.5" />Save</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[580px] w-full border-collapse">
+                      <thead>
+                        <tr className="text-[11px] uppercase text-muted-foreground">
+                          <th className="text-left p-2 border-b">Criterion</th>
+                          <th className="text-left p-2 border-b w-20">Pts</th>
+                          <th className="text-left p-2 border-b w-24">Weight %</th>
+                          <th className="text-left p-2 border-b w-32">Levels</th>
+                          <th className="p-2 border-b w-10" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {generated.rubric.criteria.map((c, idx) => (
+                          <tr key={c.id} className="align-top">
+                            <td className="p-2 border-b">
+                              <Input className="mb-1.5 h-8 rounded-xl font-semibold text-sm" value={c.name} placeholder="Criterion title" onChange={(e) => {
+                                const v = e.target.value;
+                                setGenerated((p) => {
+                                  if (!p) return p;
+                                  const next = [...p.rubric.criteria]; next[idx] = { ...next[idx], name: v };
+                                  return { ...p, rubric: { ...p.rubric, criteria: next } };
+                                });
+                              }} />
+                              <textarea className="w-full rounded-xl border border-input bg-background px-2 py-1.5 text-xs text-muted-foreground focus:ring-2 focus:ring-primary outline-none min-h-[44px] resize-y" placeholder="Description (optional)" value={c.description} onChange={(e) => {
+                                const v = e.target.value;
+                                setGenerated((p) => {
+                                  if (!p) return p;
+                                  const next = [...p.rubric.criteria]; next[idx] = { ...next[idx], description: v };
+                                  return { ...p, rubric: { ...p.rubric, criteria: next } };
+                                });
+                              }} />
+                            </td>
+                            <td className="p-2 border-b font-semibold text-sm">{c.points}</td>
+                            <td className="p-2 border-b">
+                              <Input className="w-20 h-8 rounded-xl text-sm" type="number" value={c.weight} onChange={(e) => {
+                                const v = Number(e.target.value);
+                                setGenerated((p) => {
+                                  if (!p) return p;
+                                  const next = [...p.rubric.criteria]; next[idx] = { ...next[idx], weight: Number.isFinite(v) ? v : 0 };
+                                  return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: next }) };
+                                });
+                              }} />
+                            </td>
+                            <td className="p-2 border-b">
+                              <Button type="button" variant="outline" size="sm" className="rounded-xl text-xs" onClick={() => { setRubricSplitCriterionIdx(idx); setRubricSplitDraft(criterionLevelsToDraft(c)); }}>Edit levels</Button>
+                            </td>
+                            <td className="p-2 border-b">
+                              <button type="button" className="h-8 w-8 flex items-center justify-center rounded-xl border border-border text-red-500 hover:bg-red-50 transition-colors" onClick={() => {
+                                setRubricSplitCriterionIdx(null);
+                                setGenerated((p) => {
+                                  if (!p) return p;
+                                  const next = p.rubric.criteria.filter((_, i) => i !== idx);
+                                  return { ...p, rubric: calcPointsFromWeights({ ...p.rubric, criteria: normalizeWeightsTo100(next) }) };
+                                });
+                              }}><Trash2 className="w-3.5 h-3.5" /></button>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td className="p-2 font-bold text-sm">Total</td>
+                          <td className="p-2 font-bold text-sm">{generated.rubric.totalPoints}</td>
+                          <td className="p-2 font-bold text-sm">{Math.round(weightSum)}%</td>
+                          <td colSpan={2} />
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Save / Discard */}
+              <div className="flex items-center justify-end gap-3 pb-4">
+                <Button variant="outline" onClick={handleDiscard} disabled={isSaving}>Discard</Button>
+                <Button onClick={handleSave} disabled={isSaving || !selectedPrompt} className="gap-2">
+                  {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  {isSaving ? "Saving…" : "Save Assessment"}
+                  {!isSaving && <ArrowRight className="w-4 h-4" />}
+                </Button>
+              </div>
+
             </motion.div>
           </AnimatePresence>
         )}
@@ -1870,4 +1458,3 @@ export default function WritingGenerator() {
     </DashboardLayout>
   );
 }
-

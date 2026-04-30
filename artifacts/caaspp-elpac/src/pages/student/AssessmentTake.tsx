@@ -25,6 +25,49 @@ function parseWritingActivityPayload(explanation?: string | null) {
   }
 }
 
+type WritingHighlight = {
+  id?: string;
+  section: 'prompt' | 'background' | 'source';
+  start: number;
+  end: number;
+  text?: string;
+  sourceIndex?: number;
+};
+
+function renderHighlightedText(
+  text: string,
+  highlights: WritingHighlight[] | undefined,
+  section: WritingHighlight['section'],
+  sourceIndex?: number,
+) {
+  if (!text) return text;
+  const list = (highlights || [])
+    .filter((h) => h.section === section)
+    .filter((h) => (section === 'source' ? h.sourceIndex === sourceIndex : true))
+    .filter((h) => Number.isFinite(h.start) && Number.isFinite(h.end) && h.end > h.start)
+    .sort((a, b) => a.start - b.start);
+  if (!list.length) return text;
+
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  let key = 0;
+  for (const h of list) {
+    const start = Math.max(0, Math.min(text.length, h.start));
+    const end = Math.max(start, Math.min(text.length, h.end));
+    if (start > cursor) nodes.push(<span key={`t-${key++}`}>{text.slice(cursor, start)}</span>);
+    if (end > start) {
+      nodes.push(
+        <mark key={`m-${key++}`} className="rounded bg-[#39ff14]/45 text-slate-900 px-0.5">
+          {text.slice(start, end)}
+        </mark>,
+      );
+      cursor = end;
+    }
+  }
+  if (cursor < text.length) nodes.push(<span key={`t-${key++}`}>{text.slice(cursor)}</span>);
+  return nodes;
+}
+
 function parseStoredFeedback(feedback: unknown): any | null {
   if (typeof feedback !== 'string' || feedback.trim().length === 0) return null;
   try {
@@ -780,7 +823,7 @@ export default function AssessmentTake() {
                 <div className="mb-4 p-4 md:p-5 rounded-xl border border-border bg-white">
                   <div className="flex items-start justify-between gap-3">
                     <h3 className="text-2xl font-medium text-foreground leading-relaxed flex-1">
-                      {currentQ.text}
+                      {renderHighlightedText(currentQ.text, writingPayload?.highlights as WritingHighlight[] | undefined, 'prompt')}
                     </h3>
                     <AudioPlayer
                       text={
@@ -803,7 +846,11 @@ export default function AssessmentTake() {
                     Background Information
                   </span>
                   <div className="text-sm text-emerald-900 whitespace-pre-line max-h-48 overflow-y-auto pr-1">
-                    {writingPayload.backgroundInformation}
+                    {renderHighlightedText(
+                      writingPayload.backgroundInformation || '',
+                      writingPayload?.highlights as WritingHighlight[] | undefined,
+                      'background',
+                    )}
                   </div>
                 </div>
 
@@ -847,7 +894,12 @@ export default function AssessmentTake() {
                               {[source.author, source.year, source.type].filter(Boolean).join(' • ')}
                             </div>
                             <div className="text-sm text-gray-700 whitespace-pre-line max-h-64 overflow-y-auto pr-1">
-                              {source.description}
+                              {renderHighlightedText(
+                                source.description || '',
+                                writingPayload?.highlights as WritingHighlight[] | undefined,
+                                'source',
+                                Math.min(selectedSourceIdx, writingPayload.sources.length - 1),
+                              )}
                             </div>
                             {source.type === "video" ? (
                               (() => {

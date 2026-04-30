@@ -10,6 +10,7 @@ app.use(
       "http://localhost:5173",
       "http://127.0.0.1:5173",
       "https://casp-tu0m.onrender.com",
+      "https://app.skrypt.com"
     ],
     // GET /api/auth/me sends Authorization → browser preflight must allow it
     allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
