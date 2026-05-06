@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { assessmentsTable, questionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { ai } from "@workspace/integrations-gemini-ai";
 
 const router: IRouter = Router();
 
@@ -156,6 +157,140 @@ router.delete("/assessments/:assessmentId", async (req: Request, res: Response) 
   await db.delete(assessmentsTable).where(eq(assessmentsTable.id, assessmentId as string));
 
   return res.json({ success: true, message: "Assessment and associated questions deleted successfully" });
+});
+
+router.post("/questions/brief", async (req: Request, res: Response) => {
+  const { questionText, questionType, options, backgroundInformation, sources } = req.body ?? {};
+
+  if (typeof questionText !== "string" || questionText.trim().length < 5) {
+    return res.status(400).json({
+      error: "bad_request",
+      message: "Question text is required",
+    });
+  }
+
+  const qType = typeof questionType === "string" ? questionType : "essay";
+  const optionsText = Array.isArray(options) ? options.join(" | ") : "(none)";
+  const bgText = typeof backgroundInformation === "string" ? backgroundInformation : "(none)";
+  const sourcesText = Array.isArray(sources) ? JSON.stringify(sources).slice(0, 1500) : "(none)";
+
+  const systemInstruction = `You are given an assessment question. You must help students understand the question. You must explain what the question is asking in clear, student-friendly language.
+
+Guidelines:
+- You must never answer the question itself. 
+- You must never give tips or advice on how to answer the question.
+- The output must be in plain text format, it must not contain any markdown, bullet points, or labels.
+- Keep your response concise.
+
+Following is some context on the question to help you provide a clear explanation.
+Question Type: ${qType}
+Question: ${questionText}
+Answer Options (if any): ${optionsText}
+Background Information: ${bgText}
+Sources: ${sourcesText}`;
+
+//   const userPrompt = `A student needs help understanding what this question is asking. 
+// Explain it to them clearly and concretely.
+
+// Rules:
+// - Use plain conversational prose (no markdown, bullets, or headers).
+// - Name at least 3 specific terms or concepts directly from the question.
+// - Clarify any tricky vocabulary in the question itself.
+// - If background or sources are provided, briefly explain how they relate to the question's topic.
+// - Do NOT answer the question.
+// - Do NOT give essay-writing tips or structure advice.
+// - Keep it between 80–160 words.
+
+// ---
+// Question Type: ${qType}
+// Question: ${questionText}
+// Answer Options (if any): ${optionsText}
+// Background Information: ${bgText}
+// Sources: ${sourcesText}`;
+
+  const toCompletedSentences = (value: string): string => {
+    const clean = String(value ?? "").replace(/\s+/g, " ").trim();
+    if (!clean) return "";
+    const lastTerminal = Math.max(
+      clean.lastIndexOf("."),
+      clean.lastIndexOf("!"),
+      clean.lastIndexOf("?")
+    );
+    return lastTerminal >= 0 ? clean.slice(0, lastTerminal + 1).trim() : `${clean}.`;
+  };
+
+  const isVague = (text: string): boolean => {
+    const lower = text.toLowerCase();
+    const genericPhrases = [
+      "this question asks you to",
+      "you should explain",
+      "in your response",
+      "be clear and specific",
+      "support your ideas",
+      "provide evidence",
+      "think about",
+      "consider the following",
+    ];
+    const hits = genericPhrases.filter((p) => lower.includes(p)).length;
+    // Extract meaningful words (6+ chars) to gauge topic specificity
+    const meaningfulWords = (text.match(/[a-zA-Z]{6,}/g) ?? []).map((w) => w.toLowerCase());
+    const uniqueMeaningful = new Set(meaningfulWords);
+    return hits >= 2 || uniqueMeaningful.size < 15;
+  };
+
+  const preferredModels = ["gemini-3-flash-preview", "gemini-2.5-flash"];
+  let lastError: unknown = null;
+  // const combinedPrompt = `${systemInstruction}\n\n${userPrompt}`;
+  const combinedPrompt = systemInstruction;
+
+  for (const model of preferredModels) {
+    try {
+      const firstResponse = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: combinedPrompt }] }],
+        config: { temperature: 0.0 },
+      });
+
+      let brief = toCompletedSentences(String(firstResponse.text ?? ""));
+
+      if (isVague(brief)) {
+        // Pass the original response back so the model can self-correct
+        const correctionPrompt = `Your previous explanation was too generic. Here it is:
+
+"${brief}"
+
+Rewrite it so it is grounded specifically in THIS question: "${questionText}"
+- Name at least 3 specific concepts or terms from the question above.
+- Stay between 90–170 words.
+- Plain prose only. End on a complete sentence.
+- Do NOT answer the question. Do NOT give writing advice.`;
+
+        const retryResponse = await ai.models.generateContent({
+          model,
+          contents: [
+            { role: "user", parts: [{ text: combinedPrompt }] },
+            { role: "model", parts: [{ text: brief }] },
+            { role: "user", parts: [{ text: correctionPrompt }] },
+          ],
+          config: { maxOutputTokens: 520, temperature: 0.3 },
+        });
+
+        const retried = toCompletedSentences(String(retryResponse.text ?? ""));
+        if (retried.length > 0) brief = retried;
+      }
+
+      if (brief.length > 0) return res.json({ brief });
+    } catch (error) {
+      lastError = error;
+      console.warn("[POST /api/questions/brief] Model attempt failed:", { model, error });
+    }
+  }
+
+  console.error("[POST /api/questions/brief] All models failed:", lastError);
+  return res.status(500).json({
+    error: "ai_error",
+    message: "Failed to generate question brief",
+  });
 });
 
 export default router;

@@ -495,10 +495,9 @@ Return ONLY valid JSON in this exact format:
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro",
+      model: "gemini-3.1-flash-lite-preview",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
-        maxOutputTokens: 1024,
         responseMimeType: "application/json",
       },
     });

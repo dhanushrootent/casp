@@ -37,7 +37,7 @@ export default function TeacherAssessments() {
       <div className="space-y-8">
         <div>
           <h1 className="text-3xl font-display font-bold mb-2">Assessments</h1>
-          <p className="text-muted-foreground text-lg">All available CAASPP & ELPAC assessments for your classes</p>
+          <p className="text-muted-foreground text-lg">All available assessments for your classes</p>
         </div>
 
         {isLoading ? (

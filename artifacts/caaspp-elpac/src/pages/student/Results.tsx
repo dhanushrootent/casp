@@ -212,9 +212,11 @@ export default function StudentResults() {
                                     Finalized attempt: Attempt {finalizedAttemptIdx + 1}
                                   </span>
                                 ) : null}
-                                <span className="text-xs font-semibold text-emerald-700">
-                                  {Math.round(Number(latestResult.percentage || 0))}%
-                                </span>
+                                {Number(latestResult.percentage || 0) >= 90 ? (
+                                  <span className="text-xs font-semibold text-emerald-700">
+                                    {Math.round(Number(latestResult.percentage || 0))}%
+                                  </span>
+                                ) : null}
                               </div>
                             ) : (
                               <p className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">

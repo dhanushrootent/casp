@@ -42,7 +42,7 @@ export default function AdminDashboard() {
       <div className="space-y-8">
         <div>
           <h1 className="text-3xl font-display font-bold mb-2">District Analytics</h1>
-          <p className="text-muted-foreground text-lg">School-wide performance overview for CAASPP & ELPAC</p>
+          <p className="text-muted-foreground text-lg">School-wide performance overview</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

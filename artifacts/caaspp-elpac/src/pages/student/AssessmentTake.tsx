@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useRoute } from 'wouter';
 import { Button, Card, CardContent } from '@/components/ui';
-import { Clock, ChevronRight, ChevronLeft, CheckCircle2, Sparkles, Loader2, Bold, Italic, Underline, List, ListOrdered } from 'lucide-react';
+import { Clock, ChevronRight, CheckCircle2, Sparkles, Loader2, Bold, Italic, Underline, List, ListOrdered } from 'lucide-react';
 import { formatTime } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AudioPlayer } from '@/components/ui/audio-player';
 import { WritingRubricGradeView } from '@/components/teacher/WritingRubricGradeView';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 
 import { useGetAssessment, getGetAssessmentQueryKey, useSubmitResult, useGetResult, getGetResultQueryKey, useListResults } from '@workspace/api-client-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
+import { API_BASE_URL } from '@/config/api';
 
 function parseWritingActivityPayload(explanation?: string | null) {
   if (!explanation) return null;
@@ -244,6 +246,7 @@ export default function AssessmentTake() {
   const [violationCount, setViolationCount] = useState(0);
   const [isSecurityBlocked, setIsSecurityBlocked] = useState(false);
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
+  const [questionBriefs, setQuestionBriefs] = useState<Record<string, string>>({});
   const videoInteractionBypassRef = React.useRef(false);
   const videoInteractionTimeoutRef = React.useRef<number | null>(null);
   const maxViolations = 3;
@@ -314,6 +317,50 @@ export default function AssessmentTake() {
     if (!currentQ || !answers[currentQ.id]) return;
     setCheckedAnswers(prev => ({ ...prev, [currentQ.id]: true }));
   };
+
+  const getQuestionBrief = React.useCallback(async () => {
+    if (!currentQ?.id) return currentQ?.text || "";
+    const cached = questionBriefs[currentQ.id];
+    if (cached && cached.trim().length > 0) return cached;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/questions/brief`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          questionText: currentQ.text || "",
+          questionType: currentQ.type || "essay",
+          options: Array.isArray(currentQ.options) ? currentQ.options : [],
+          backgroundInformation:
+            writingPayload && typeof writingPayload.backgroundInformation === "string"
+              ? writingPayload.backgroundInformation
+              : undefined,
+          sources:
+            writingPayload && Array.isArray(writingPayload.sources)
+              ? writingPayload.sources.map((s: any) => ({
+                  title: s?.title,
+                  description: s?.description,
+                  type: s?.type,
+                }))
+              : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed brief request: ${response.status}`);
+      }
+      const data = await response.json();
+      const brief = typeof data?.brief === 'string' ? data.brief.trim() : "";
+      if (brief.length > 0) {
+        setQuestionBriefs((prev) => ({ ...prev, [currentQ.id]: brief }));
+        return brief;
+      }
+    } catch (e) {
+      console.error("Failed to generate question brief", e);
+    }
+
+    return currentQ?.audioScript || currentQ?.text || "";
+  }, [currentQ, questionBriefs, writingPayload]);
 
   const requestExamFullscreen = async () => {
     try {
@@ -428,6 +475,12 @@ export default function AssessmentTake() {
     const onFullscreenChange = () => {
       const active = Boolean(document.fullscreenElement);
       setIsFullscreen(active);
+      if (examStarted && !isSubmitted && !active) {
+        setIsSecurityBlocked(true);
+        // Try to immediately restore fullscreen (e.g., ESC exit). If browser blocks it,
+        // the security overlay keeps the test paused until the student resumes.
+        void requestExamFullscreen();
+      }
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
@@ -471,14 +524,16 @@ export default function AssessmentTake() {
         ((e.ctrlKey || e.metaKey) && ['p', 's', 't', 'n', 'w'].includes(e.key.toLowerCase()));
       if (!blocked) return;
       e.preventDefault();
+      e.stopPropagation();
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('keydown', onKeyDown);
+    // Capture phase gives this handler priority before default browser fullscreen-exit handling.
+    window.addEventListener('keydown', onKeyDown, { capture: true });
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, { capture: true });
     };
   }, [examStarted, isSubmitted, toast]);
 
@@ -752,8 +807,18 @@ export default function AssessmentTake() {
 
       {/* Header */}
       <header className="h-16 bg-white border-b border-border grid grid-cols-3 items-center px-6 sticky top-0 z-10 shadow-sm">
-        <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-          {currentQ?.type?.replace('_', ' ') || 'Essay'}
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+            {currentQ?.type?.replace('_', ' ') || 'Essay'}
+          </div>
+          <div className="flex items-center gap-2 text-[11px] font-semibold min-w-0">
+            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-muted-foreground whitespace-nowrap">
+              Attempts: {attemptsUsed}/{maxAttempts}
+            </span>
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700 whitespace-nowrap">
+              Violations: {violationCount}/{maxViolations}
+            </span>
+          </div>
         </div>
         <div className="font-display font-bold text-lg text-foreground text-center truncate px-3">{assessment.title}</div>
         <div className="flex items-center justify-end">
@@ -779,45 +844,8 @@ export default function AssessmentTake() {
             Due date: {dueDate.toLocaleString()}
           </div>
         ) : null}
-        <div className="flex flex-col lg:flex-row gap-5 lg:items-stretch">
-          <aside className="lg:w-[35%] lg:min-w-[340px] lg:max-w-[35%]">
-            <Card className="shadow-sm border-border/60 h-full min-h-[560px]">
-              <CardContent className="p-5 md:p-6 h-full overflow-y-auto">
-                <div className="mb-4 flex items-center justify-between gap-2">
-                  <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Rubric</div>
-                  <span className="text-xs font-semibold text-muted-foreground">
-                    Question {currentIdx + 1} of {questions.length}
-                  </span>
-                </div>
-                <div className="mb-4">
-                  {rubricData ? (
-                    <div className="text-sm text-muted-foreground mt-1">
-                      Total Points: <span className="font-semibold text-foreground">{rubricData.totalPoints}</span>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground mt-1">No rubric available.</div>
-                  )}
-                </div>
-                {rubricData?.criteria?.length ? (
-                  <div className="space-y-3">
-                    {rubricData.criteria.map((criterion: any, idx: number) => (
-                      <div key={criterion.id || idx} className="rounded-xl border border-border bg-white p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="font-semibold text-sm text-foreground">{criterion.name}</div>
-                          <div className="text-xs font-bold text-primary whitespace-nowrap">{criterion.points} pts</div>
-                        </div>
-                        {criterion.description ? (
-                          <div className="text-xs text-muted-foreground mt-1">{criterion.description}</div>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          </aside>
-
-          <section className="lg:w-[65%] lg:max-w-[65%] flex-1 min-w-0 flex flex-col">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 lg:h-[calc(100vh-13rem)]">
+          <section className="min-w-0">
             <Card className="shadow-sm border-border/60 h-full min-h-[560px]">
               <CardContent className="p-5 md:p-6 h-full overflow-y-auto">
                 <div className="mb-4 p-4 md:p-5 rounded-xl border border-border bg-white">
@@ -826,12 +854,8 @@ export default function AssessmentTake() {
                       {renderHighlightedText(currentQ.text, writingPayload?.highlights as WritingHighlight[] | undefined, 'prompt')}
                     </h3>
                     <AudioPlayer
-                      text={
-                        (currentQ.audioScript || currentQ.text) +
-                        (currentQ.options && currentQ.options.length > 0
-                          ? '. The options are: ' + currentQ.options.map((opt: string, i: number) => `Option ${String.fromCharCode(65 + i)}: ${opt}`).join('. ')
-                          : '')
-                      }
+                      text={questionBriefs[currentQ.id] || currentQ.audioScript || currentQ.text}
+                      resolveText={getQuestionBrief}
                       buttonSize="sm"
                       iconOnly
                       className="h-8 w-8 p-0 shrink-0"
@@ -984,46 +1008,86 @@ export default function AssessmentTake() {
               </CardContent>
             </Card>
           </section>
-        </div>
-        <div className="mt-3 text-sm text-muted-foreground">
-          Attempts: {attemptsUsed}/{maxAttempts} used
-        </div>
-        <div className="mt-1 text-xs text-amber-700 font-semibold">
-          Security violations: {violationCount}/{maxViolations}
-        </div>
-        {['short_answer', 'essay', 'speaking', 'listening'].includes(currentQ.type) && (
-          <div className="mt-5">
-            <RichTextEditor
-              placeholder={currentQ.type === 'speaking' ? "Type out what you would say..." : "Type your answer here..."}
-              value={richAnswers[currentQ.id] || ''}
-              disabled={checkedAnswers[currentQ.id]}
-              onChange={(nextHtml, nextPlainText) => {
-                setRichAnswers(prev => ({ ...prev, [currentQ.id]: nextHtml }));
-                handleAnswer(nextPlainText);
-              }}
-            />
-          </div>
-        )}
-        <div className="mt-4 flex justify-between items-center">
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={() => setCurrentIdx(p => p - 1)}
-            disabled={currentIdx === 0}
-          >
-            <ChevronLeft className="w-5 h-5 mr-2" /> Previous
-          </Button>
 
+          <aside className="min-w-0 flex flex-col gap-4">
+            <Card className="shadow-sm border-border/60">
+              <CardContent className="p-5 md:p-6">
+                <Accordion type="single" collapsible defaultValue="rubric" className="w-full">
+                  <AccordionItem value="rubric" className="border-none">
+                    <AccordionTrigger className="py-0 hover:no-underline">
+                      <div className="flex w-full items-center justify-between gap-2 pr-2">
+                        <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Rubrics</div>
+                        <span className="text-xs font-semibold text-muted-foreground">
+                          Question {currentIdx + 1} of {questions.length}
+                        </span>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pt-4">
+                      <div className="mb-4">
+                        {rubricData ? (
+                          <div className="text-sm text-muted-foreground mt-1">
+                            Total Points: <span className="font-semibold text-foreground">{rubricData.totalPoints}</span>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-muted-foreground mt-1">No rubric available.</div>
+                        )}
+                      </div>
+                      {rubricData?.criteria?.length ? (
+                        <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                          {rubricData.criteria.map((criterion: any, idx: number) => (
+                            <div key={criterion.id || idx} className="rounded-xl border border-border bg-white p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="font-semibold text-sm text-foreground">{criterion.name}</div>
+                                <div className="text-xs font-bold text-primary whitespace-nowrap">{criterion.points} pts</div>
+                              </div>
+                              {criterion.description ? (
+                                <div className="text-xs text-muted-foreground mt-1">{criterion.description}</div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm border-border/60 flex-1 min-h-[360px]">
+              <CardContent className="p-5 md:p-6 h-full flex flex-col">
+                {['short_answer', 'essay', 'speaking', 'listening'].includes(currentQ.type) ? (
+                  <div className="flex-1">
+                    <RichTextEditor
+                      placeholder={currentQ.type === 'speaking' ? "Type out what you would say..." : "Type your answer here..."}
+                      value={richAnswers[currentQ.id] || ''}
+                      disabled={checkedAnswers[currentQ.id]}
+                      onChange={(nextHtml, nextPlainText) => {
+                        setRichAnswers(prev => ({ ...prev, [currentQ.id]: nextHtml }));
+                        handleAnswer(nextPlainText);
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {currentIdx === questions.length - 1 ? (
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      size="lg"
+                      variant="accent"
+                      onClick={handleSubmit}
+                      disabled={submitMutation.isPending || !canSubmitAttempt || isPastDue}
+                      className="px-10"
+                    >
+                      {submitMutation.isPending ? "Submitting..." : isPastDue ? "Past Due" : !canSubmitAttempt ? "No Attempts Left" : "Submit Assessment"} <CheckCircle2 className="w-5 h-5 ml-2" />
+                    </Button>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </aside>
+        </div>
+        <div className="mt-4 flex justify-end items-center">
           {currentIdx === questions.length - 1 ? (
-            <Button
-              size="lg"
-              variant="accent"
-              onClick={handleSubmit}
-              disabled={submitMutation.isPending || !canSubmitAttempt || isPastDue}
-              className="px-10"
-            >
-              {submitMutation.isPending ? "Submitting..." : isPastDue ? "Past Due" : !canSubmitAttempt ? "No Attempts Left" : "Submit Assessment"} <CheckCircle2 className="w-5 h-5 ml-2" />
-            </Button>
+            <div />
           ) : (
             <Button
               size="lg"

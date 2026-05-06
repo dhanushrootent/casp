@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRoute, Link } from 'wouter';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from '@/components/ui';
@@ -19,9 +19,58 @@ const typeColor: Record<string, string> = {
   ELPAC: 'bg-teal-100 text-teal-700',
 };
 
+type WritingHighlight = {
+  id?: string;
+  section: 'prompt' | 'background' | 'source';
+  start: number;
+  end: number;
+  text?: string;
+  sourceIndex?: number;
+};
+
+function renderHighlightedText(
+  text: string,
+  highlights: WritingHighlight[] | undefined,
+  section: WritingHighlight['section'],
+  sourceIndex?: number,
+) {
+  if (!text) return text;
+  const list = (highlights || [])
+    .filter((h) => h.section === section)
+    .filter((h) => (section === 'source' ? h.sourceIndex === sourceIndex : true))
+    .filter((h) => Number.isFinite(h.start) && Number.isFinite(h.end) && h.end > h.start)
+    .sort((a, b) => a.start - b.start);
+  if (!list.length) return text;
+
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  let key = 0;
+  for (const h of list) {
+    const start = Math.max(0, Math.min(text.length, h.start));
+    const end = Math.max(start, Math.min(text.length, h.end));
+    if (start > cursor) nodes.push(<span key={`t-${key++}`}>{text.slice(cursor, start)}</span>);
+    if (end > start) {
+      nodes.push(
+        <mark key={`m-${key++}`} className="rounded bg-[#39ff14]/45 text-slate-900 px-0.5">
+          {text.slice(start, end)}
+        </mark>,
+      );
+      cursor = end;
+    }
+  }
+  if (cursor < text.length) nodes.push(<span key={`t-${key++}`}>{text.slice(cursor)}</span>);
+  return nodes;
+}
+
 export default function AssessmentDetail() {
   const [, params] = useRoute('/teacher/assessments/:id');
   const id = params?.id;
+
+  useEffect(() => {
+    // Ensure the page opens at the top (writing prompt),
+    // instead of the browser restoring a previous scroll position (e.g. rubric section).
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+  }, [id]);
 
   const gradeWritingMutation = useGradeWritingResponse();
   const [writingGradeByQuestionId, setWritingGradeByQuestionId] = useState<Record<string, {
@@ -281,13 +330,31 @@ export default function AssessmentDetail() {
                     const weightSum = Math.round(calcWeightSum(rubric?.criteria || []));
                     return (
                       <div className="mt-6 p-4 rounded-xl border border-primary/15 bg-primary/5 space-y-4">
+                        {/* Student view (highlights) */}
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                            Student view
+                          </div>
+                          <div className="text-sm text-slate-900 whitespace-pre-line leading-relaxed">
+                            {renderHighlightedText(
+                              q.text || '',
+                              payload.highlights as WritingHighlight[] | undefined,
+                              'prompt',
+                            )}
+                          </div>
+                        </div>
+
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                           <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
                             <div className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2">
                               Background Information
                             </div>
                             <div className="text-sm text-emerald-900 whitespace-pre-line leading-relaxed">
-                              {payload.backgroundInformation || "No background information saved."}
+                              {renderHighlightedText(
+                                payload.backgroundInformation || '',
+                                payload.highlights as WritingHighlight[] | undefined,
+                                'background',
+                              ) || "No background information saved."}
                             </div>
                           </div>
 
@@ -306,7 +373,12 @@ export default function AssessmentDetail() {
                                       {[source.author, source.year, source.type].filter(Boolean).join(" • ")}
                                     </div>
                                     <div className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">
-                                      {source.description || "No description provided."}
+                                      {renderHighlightedText(
+                                        source.description || '',
+                                        payload.highlights as WritingHighlight[] | undefined,
+                                        'source',
+                                        sourceIdx,
+                                      ) || "No description provided."}
                                     </div>
                                     {source.url ? (
                                       <a
